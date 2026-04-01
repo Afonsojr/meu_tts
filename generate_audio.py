@@ -12,7 +12,7 @@ import os
 import numpy as np
 import soundfile as sf
 import asyncio
-from config import KOKORO_CONFIG, XTTS_CONFIG, EDGE_CONFIG, EDGE_XTTS_CONFIG
+from config import KOKORO_CONFIG, XTTS_CONFIG, EDGE_CONFIG, EDGE_XTTS_CONFIG, PIPER_CONFIG, PIPER_VOICES
 
 # Lazy loading de modelos
 _kokoro_pipeline = None
@@ -75,11 +75,13 @@ def generate(chunks, output_dir="audio", model=None, speaker_wav=None, voice=Non
             )
         return _generate_xtts(chunks, output_dir, speaker_wav)
     elif model == 'edge':
-        return _generate_edge(chunks, output_dir)
+        return _generate_edge(chunks, output_dir, voice)
     elif model == 'edge-xtts':
         return _generate_edge_xtts(chunks, output_dir)
+    elif model == 'piper':
+        return _generate_piper(chunks, output_dir, voice)
     else:
-        raise ValueError(f"Modelo desconhecido: {model}. Use 'kokoro', 'xtts', 'edge' ou 'edge-xtts'")
+        raise ValueError(f"Modelo desconhecido: {model}. Use 'kokoro', 'xtts', 'edge', 'edge-xtts' ou 'piper'")
 
 
 def _generate_kokoro(chunks, output_dir, voice, speed):
@@ -138,22 +140,27 @@ def _generate_xtts(chunks, output_dir, speaker_wav):
     return files
 
 
-def _generate_edge(chunks, output_dir):
-    """Gera áudio com Edge-TTS (online, voz Francisca pt-BR)"""
+def _generate_edge(chunks, output_dir, voice=None):
+    """Gera áudio com Edge-TTS (online, pt-BR)"""
     try:
         import edge_tts
     except ImportError:
         raise ImportError("edge-tts não instalado. Execute: pip install edge-tts")
 
     from pydub import AudioSegment
+
+    # Usar voz padrão se não especificada
+    if not voice:
+        voice = EDGE_CONFIG['voice']
+
     files = []
 
-    async def _synthesize(text, output_path_mp3):
+    async def _synthesize(text, output_path_mp3, voice_selected):
         """Função assíncrona para sintetizar com Edge-TTS"""
         # Edge-TTS precisa de rate e pitch como strings com formato especial
         communicate = edge_tts.Communicate(
             text,
-            voice=EDGE_CONFIG['voice'],
+            voice=voice_selected,
             rate=str(EDGE_CONFIG['rate']),
             pitch=str(EDGE_CONFIG['pitch'])
         )
@@ -166,11 +173,14 @@ def _generate_edge(chunks, output_dir):
         path_wav = f"{output_dir}/part_{i}.wav"
         path_mp3 = f"{output_dir}/.part_{i}_edge.mp3"
 
-        print(f"  [{i+1}] Edge-TTS (Francisca) - {len(chunk)} chars", end="")
+        # Extrair nome da voz para exibição
+        voice_label = voice.split('-')[-1].replace('Neural', '')
+
+        print(f"  [{i+1}] Edge-TTS ({voice_label}) - {len(chunk)} chars", end="")
 
         try:
             # Executar função assíncrona (salva como MP3)
-            asyncio.run(_synthesize(chunk, path_mp3))
+            asyncio.run(_synthesize(chunk, path_mp3, voice))
 
             # Converter MP3 para WAV (Edge-TTS salva como MP3, não WAV)
             audio = AudioSegment.from_mp3(path_mp3)
@@ -264,5 +274,51 @@ def _generate_edge_xtts(chunks, output_dir):
         os.remove(ref_path)
     except:
         pass
+
+    return files
+
+
+def _generate_piper(chunks, output_dir, voice=None):
+    """Gera áudio com Piper TTS (rápido em CPU)"""
+    try:
+        from piper.voice import PiperVoice
+    except ImportError:
+        raise ImportError("piper-tts não instalado. Execute: uv sync --extra piper")
+
+    import wave
+
+    # Usar voz padrão se não especificada
+    if not voice:
+        voice = PIPER_CONFIG['default_voice']
+
+    files = []
+
+    # Carregar modelo de voz uma única vez
+    print(f"  🔄 Carregando modelo Piper: {voice}...")
+    try:
+        voice_model = PiperVoice.load(voice)
+    except Exception as e:
+        raise ValueError(f"Erro ao carregar modelo Piper '{voice}': {e}")
+
+    for i, chunk in enumerate(chunks):
+        if not chunk.strip():
+            continue
+
+        path = f"{output_dir}/part_{i}.wav"
+
+        # Extrair nome da voz para exibição
+        voice_label = voice.split('_')[1] if '_' in voice else voice
+
+        print(f"  [{i+1}] Piper ({voice_label}) - {len(chunk)} chars", end="")
+
+        try:
+            # Sintetizar com Piper
+            with wave.open(path, "wb") as wav_file:
+                voice_model.synthesize(chunk, wav_file)
+
+            files.append(path)
+            print(" ✓")
+        except Exception as e:
+            print(f" ✗ (Erro: {e})")
 
     return files

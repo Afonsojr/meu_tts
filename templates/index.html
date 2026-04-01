@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TTS Audiobook Generator</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-content">
+                <h1>🎤 TTS Audiobook Generator</h1>
+                <p>Converta seu texto em áudio com qualidade profissional</p>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Form Section -->
+            <section class="form-section">
+                <div class="form-card">
+                    <!-- Text Input -->
+                    <div class="form-group">
+                        <label for="text-input">📝 Seu Texto</label>
+                        <textarea
+                            id="text-input"
+                            placeholder="Cole seu texto aqui ou digite uma nova história..."
+                            rows="8"
+                        ></textarea>
+                        <span class="char-count">0 caracteres</span>
+                    </div>
+
+                    <!-- Model Selection -->
+                    <div class="form-group">
+                        <label>🎵 Modelo TTS</label>
+                        <div class="model-grid">
+                            <div class="model-option">
+                                <input
+                                    type="radio"
+                                    id="model-kokoro"
+                                    name="model"
+                                    value="kokoro"
+                                    checked
+                                />
+                                <label for="model-kokoro" class="model-label">
+                                    <span class="model-name">Kokoro TTS</span>
+                                    <span class="model-desc">Rápido, offline, feminino</span>
+                                </label>
+                            </div>
+
+                            <div class="model-option">
+                                <input
+                                    type="radio"
+                                    id="model-edge"
+                                    name="model"
+                                    value="edge"
+                                />
+                                <label for="model-edge" class="model-label">
+                                    <span class="model-name">Edge-TTS</span>
+                                    <span class="model-desc">Online, grátis, Francisca</span>
+                                </label>
+                            </div>
+
+                            <div class="model-option">
+                                <input
+                                    type="radio"
+                                    id="model-piper"
+                                    name="model"
+                                    value="piper"
+                                />
+                                <label for="model-piper" class="model-label">
+                                    <span class="model-name">Piper TTS</span>
+                                    <span class="model-desc">Ultra-rápido, offline, CPU puro</span>
+                                </label>
+                            </div>
+
+                            <div class="model-option">
+                                <input
+                                    type="radio"
+                                    id="model-edge-xtts"
+                                    name="model"
+                                    value="edge-xtts"
+                                />
+                                <label for="model-edge-xtts" class="model-label">
+                                    <span class="model-name">Edge-TTS + XTTS</span>
+                                    <span class="model-desc">Clonagem, melhor qualidade</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Voice & Speed Options -->
+                    <div id="voice-speed-options" class="form-group">
+                        <div class="row">
+                            <div id="voice-container" class="col" style="display: none;">
+                                <label for="voice-select">🔊 Voz</label>
+                                <select id="voice-select"></select>
+                            </div>
+                            <div id="speed-container" class="col" style="display: none;">
+                                <label for="speed-input">⚡ Velocidade</label>
+                                <div class="speed-control">
+                                    <input
+                                        type="range"
+                                        id="speed-input"
+                                        min="0.5"
+                                        max="2.0"
+                                        step="0.1"
+                                        value="1.0"
+                                    />
+                                    <span id="speed-value">1.0x</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Submit Button -->
+                    <button id="convert-btn" class="btn btn-primary btn-large">
+                        <span class="btn-icon">✨</span>
+                        <span class="btn-text">Converter para Áudio</span>
+                    </button>
+                </div>
+            </section>
+
+            <!-- Status Section -->
+            <section id="status-section" class="status-section" style="display: none;">
+                <div class="status-card">
+                    <div class="status-header">
+                        <h2>📊 Status de Processamento</h2>
+                        <div id="status-indicator" class="status-badge status-processing">
+                            Processando...
+                        </div>
+                    </div>
+
+                    <!-- Progress Bar -->
+                    <div class="progress-container">
+                        <div class="progress-bar">
+                            <div id="progress-fill" class="progress-fill"></div>
+                        </div>
+                        <p id="status-message" class="status-message">Iniciando processamento...</p>
+                    </div>
+
+                    <!-- Status Details -->
+                    <div id="status-details" class="status-details">
+                        <p><strong>Job ID:</strong> <span id="job-id">-</span></p>
+                        <p><strong>Status:</strong> <span id="status-text">Processando...</span></p>
+                        <p><strong>Modelo:</strong> <span id="model-text">-</span></p>
+                    </div>
+
+                    <!-- Action Buttons -->
+                    <div id="action-buttons" class="action-buttons" style="display: none;">
+                        <button id="download-btn" class="btn btn-success">
+                            📥 Baixar Áudio
+                        </button>
+                        <button id="reset-btn" class="btn btn-secondary">
+                            🔄 Novo
+                        </button>
+                    </div>
+
+                    <!-- Error Message -->
+                    <div id="error-box" class="error-box" style="display: none;"></div>
+                </div>
+            </section>
+
+            <!-- Info Section -->
+            <section class="info-section">
+                <div class="info-grid">
+                    <div class="info-card">
+                        <h3>🚀 Kokoro TTS</h3>
+                        <p>Modelo rápido e leve que funciona completamente offline. Ideal para uso local.</p>
+                        <ul>
+                            <li>⚡ Muito rápido</li>
+                            <li>🔒 Privado (offline)</li>
+                            <li>📊 Baixo uso de memória</li>
+                        </ul>
+                    </div>
+
+                    <div class="info-card">
+                        <h3>🌐 Edge-TTS</h3>
+                        <p>Serviço online gratuito da Microsoft com voz natural e expressiva.</p>
+                        <ul>
+                            <li>💰 Grátis</li>
+                            <li>🎭 Voz natural</li>
+                            <li>📡 Precisa internet</li>
+                        </ul>
+                    </div>
+
+                    <div class="info-card">
+                        <h3>⚡ Piper TTS</h3>
+                        <p>Síntese ultra-rápida otimizada para CPU, perfeita para dispositivos com poucos recursos.</p>
+                        <ul>
+                            <li>🚀 30x mais rápido</li>
+                            <li>💻 CPU puro, sem GPU</li>
+                            <li>🔒 Totalmente offline</li>
+                        </ul>
+                    </div>
+
+                    <div class="info-card">
+                        <h3>🎙️ Edge-TTS + XTTS</h3>
+                        <p>Combinação poderosa que clona a voz Francisca para melhor qualidade.</p>
+                        <ul>
+                            <li>✨ Clonagem de voz</li>
+                            <li>🎵 Alta qualidade</li>
+                            <li>⏱️ Mais lento</li>
+                        </ul>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>🎙️ TTS Audiobook Generator | Crie audiobooks incríveis em minutos</p>
+        </footer>
+    </div>
+
+    <script src="/static/script.js"></script>
+</body>
+</html>

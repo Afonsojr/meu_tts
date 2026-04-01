@@ -23,6 +23,13 @@ EDGE_CONFIG = {
     "pitch": "+0Hz",  # Altura: "-10Hz", "+0Hz", "+10Hz", etc
 }
 
+# Vozes disponíveis do Edge-TTS (português brasileiro)
+EDGE_VOICES = {
+    "pt-BR-FranciscaNeural": "Francisca (Feminina)",
+    "pt-BR-BryanNeural": "Bryan (Masculino)",
+    "pt-BR-AntonioNeural": "Antonio (Masculino)",
+}
+
 # Configurações do XTTS v2
 XTTS_CONFIG = {
     "model_name": "tts_models/multilingual/multi-dataset/xtts_v2",
@@ -39,6 +46,19 @@ EDGE_XTTS_CONFIG = {
     "reference_duration": 10,  # Segundos de áudio para usar como referência
     "xtts_device": "cpu",  # 'cpu' ou 'cuda'
     "xtts_language": "pt",
+}
+
+# Configurações do Piper TTS
+PIPER_CONFIG = {
+    "models_dir": "piper_models",  # Diretório para cachear modelos
+    "default_voice": "pt-pt_tugao-medium",
+    "language": "pt",
+}
+
+# Vozes disponíveis do Piper (português)
+PIPER_VOICES = {
+    "pt-pt_tugao-medium": "Tugão (PT) - Médio",
+    "pt-pt_tugao-high": "Tugão (PT) - Alto",
 }
 
 # Configurações gerais
