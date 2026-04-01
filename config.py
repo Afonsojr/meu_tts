@@ -1,0 +1,51 @@
+"""
+Configurações do projeto TTS
+
+Permite escolher entre:
+- Kokoro TTS (padrão): Leve, voz feminina nativa pt-BR
+- XTTS v2: Clonagem de voz com arquivo de referência
+"""
+
+# Modelo padrão: 'kokoro' ou 'xtts'
+DEFAULT_MODEL = "kokoro"
+
+# Configurações do Kokoro
+KOKORO_CONFIG = {
+    "lang_code": "p",  # 'p' = Portuguese BR
+    "voice": "pf_dora",  # Voz feminina brasileira
+    "speed": 1.0,  # 0.5 (mais lento) a 2.0 (mais rápido)
+}
+
+# Configurações do Edge-TTS
+EDGE_CONFIG = {
+    "voice": "pt-BR-FranciscaNeural",  # Voz feminina brasileira
+    "rate": "+0%",  # Velocidade: "-50%", "+0%", "+50%", etc
+    "pitch": "+0Hz",  # Altura: "-10Hz", "+0Hz", "+10Hz", etc
+}
+
+# Configurações do XTTS v2
+XTTS_CONFIG = {
+    "model_name": "tts_models/multilingual/multi-dataset/xtts_v2",
+    "language": "pt",
+    "speaker_wav": None,  # Caminho do arquivo WAV de referência (10-30 seg)
+    "device": "cpu",  # 'cpu' ou 'cuda'
+}
+
+# Configurações do Edge-TTS + XTTS v2 (clonagem)
+EDGE_XTTS_CONFIG = {
+    "edge_voice": "pt-BR-FranciscaNeural",  # Voz de referência
+    "edge_rate": "+0%",  # Velocidade da voz de referência ("+0%", "-20%", etc)
+    "edge_pitch": "+0Hz",  # Altura da voz ("-10Hz", "+0Hz", etc)
+    "reference_duration": 10,  # Segundos de áudio para usar como referência
+    "xtts_device": "cpu",  # 'cpu' ou 'cuda'
+    "xtts_language": "pt",
+}
+
+# Configurações gerais
+OUTPUT_DIR = "audio"
+FINAL_OUTPUT = "audiobook.mp3"
+MP3_BITRATE = "192k"
+SILENCE_DURATION = 400  # ms entre chunks
+
+# Configurações de texto
+MAX_CHUNK_SIZE = 400  # caracteres

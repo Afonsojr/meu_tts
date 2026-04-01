@@ -1,0 +1,10 @@
+version: "3.9"
+
+services:
+  tts:
+    build: .
+    container_name: tts-audiobook
+    volumes:
+      - .:/app
+    stdin_open: true
+    tty: true
