@@ -50,7 +50,7 @@ def _add_id3_tags(mp3_path, provider=None, model=None, voice=None):
         try:
             audio = ID3(mp3_path)
             audio.delete()
-        except:
+        except OSError:
             pass
 
         # Criar novas tags
@@ -70,6 +70,6 @@ def _add_id3_tags(mp3_path, provider=None, model=None, voice=None):
 
         # Salvar tags
         audio.save(mp3_path, v2_version=4)
-    except Exception as e:
+    except Exception:
         # Se falhar, não impedir o processamento
         pass

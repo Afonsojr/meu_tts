@@ -1,8 +1,9 @@
 import re
 
+
 def split_text(text, max_chars=400):
     # Dividir por pontuação final real (. ! ?) seguida de espaço
-    sentences = re.split(r'(?<=[.!?])\s+', text)
+    sentences = re.split(r"(?<=[.!?])\s+", text)
     chunks = []
     current = ""
 

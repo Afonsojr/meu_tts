@@ -35,7 +35,12 @@ piper = [
 ]
 dev = [
     "mutagen>=1.46.0",
+    "ruff>=0.6.0",
 ]
 
 [project.scripts]
 tts-audiobook = "main:main"
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"

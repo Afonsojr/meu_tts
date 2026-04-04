@@ -1,5 +1,6 @@
 import re
 
+
 def clean_markdown(md_text: str) -> str:
     # remove blocos de código
     md_text = re.sub(r"```.*?```", "", md_text, flags=re.DOTALL)
@@ -16,8 +17,12 @@ def clean_markdown(md_text: str) -> str:
     md_text = re.sub(r"\[(.*?)\]\(.*?\)", r"\1", md_text)  # links
 
     # remove listas markdown
-    md_text = re.sub(r"^\s*[-*+]\s+", "", md_text, flags=re.MULTILINE)  # listas com - * +
-    md_text = re.sub(r"^\s*\d+\.\s+", "", md_text, flags=re.MULTILINE)  # listas numeradas
+    md_text = re.sub(
+        r"^\s*[-*+]\s+", "", md_text, flags=re.MULTILINE
+    )  # listas com - * +
+    md_text = re.sub(
+        r"^\s*\d+\.\s+", "", md_text, flags=re.MULTILINE
+    )  # listas numeradas
 
     # remove blockquotes
     md_text = re.sub(r"^>\s+", "", md_text, flags=re.MULTILINE)

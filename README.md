@@ -32,6 +32,21 @@ uv sync --all-extras
 uv sync --extra xtts
 ```
 
+## Qualidade de código
+
+### Ruff
+```bash
+uv run ruff check .
+uv run ruff format .
+```
+
+Se preferir atalhos via `make`:
+```bash
+make lint
+make lint-fix
+make format
+```
+
 ## Uso
 
 ### Básico (Kokoro com voz feminina padrão)
@@ -72,6 +87,38 @@ uv run main.py livro.md \
 uv run main.py livro.md -o meu_audiobook.mp3
 uv run main.py livro.md --audio-dir saida/chunks
 ```
+
+### Atalhos da CLI
+```bash
+uv run main.py -i livro.md -m edge -o meu_audiobook.mp3 -s 35
+```
+
+Atalhos disponíveis:
+- `-i` = entrada
+- `-m` = modelo
+- `-o` = saída
+- `-s` = start-at
+
+### Pasta com vários arquivos `.md`
+```bash
+uv run main.py /meus/livros --model edge --output-dir /meus/livros/audio
+```
+
+Isso gera um MP3 para cada `.md` encontrado na pasta de entrada, usando o mesmo nome base:
+- `capitulo1.md` -> `audio/capitulo1.mp3`
+- `capitulo2.md` -> `audio/capitulo2.mp3`
+
+Se uma execução travar no meio da pasta, você pode retomar a partir de um arquivo específico com `--start-at`:
+```bash
+uv run main.py /meus/livros --model edge --output-dir /meus/livros/audio --start-at 35
+```
+Isso pula os 34 primeiros `.md` e começa no 35º arquivo da lista ordenada.
+
+Para um arquivo Markdown único, `--start-at` pula chunks internos. Exemplo:
+```bash
+uv run main.py livro.md --start-at 35
+```
+Isso começa do chunk 35.
 
 ### Ver todas as opções
 ```bash

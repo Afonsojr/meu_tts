@@ -6,9 +6,9 @@ Recebe texto, converte para áudio com modelo selecionado, retorna download
 
 import os
 import tempfile
-from pathlib import Path
+from typing import Optional
 from fastapi import FastAPI, HTTPException, BackgroundTasks
-from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -18,7 +18,7 @@ from md_to_text import clean_markdown
 from chunker import split_text
 from generate_audio import generate
 from merge_audio import merge
-from config import EDGE_VOICES, KOKORO_CONFIG, PIPER_VOICES
+from config import EDGE_VOICES, PIPER_VOICES, resolve_voice
 
 # ============================================================
 # Configuração FastAPI
@@ -43,23 +43,27 @@ if os.path.exists("static"):
 # Modelos de Request/Response
 # ============================================================
 
+
 class AudioRequest(BaseModel):
     text: str
     model: str = "kokoro"  # kokoro, edge, edge-xtts, xtts
-    voice: str = "pf_dora"
+    voice: Optional[str] = None
     speed: float = 1.0
-    speaker_wav: str = None
+    speaker_wav: Optional[str] = None
+
 
 class AudioResponse(BaseModel):
     job_id: str
     status: str
     message: str
 
+
 # ============================================================
 # Sistema de Jobs para processamento async
 # ============================================================
 
 jobs = {}
+
 
 class AudioJob:
     def __init__(self, job_id: str):
@@ -78,9 +82,11 @@ class AudioJob:
             "error": self.error,
         }
 
+
 # ============================================================
 # Endpoints
 # ============================================================
+
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
@@ -91,6 +97,7 @@ async def root():
             return f.read()
     return "<h1>TTS Audiobook Generator API</h1>"
 
+
 @app.post("/api/convert")
 async def convert_audio(request: AudioRequest, background_tasks: BackgroundTasks):
     """
@@ -100,7 +107,7 @@ async def convert_audio(request: AudioRequest, background_tasks: BackgroundTasks
     {
         "text": "Seu texto aqui",
         "model": "kokoro|edge|edge-xtts|xtts",
-        "voice": "pf_dora",
+        "voice": "opcional, dependendo do modelo",
         "speed": 1.0,
         "speaker_wav": "opcional para XTTS"
     }
@@ -118,21 +125,14 @@ async def convert_audio(request: AudioRequest, background_tasks: BackgroundTasks
 
     if request.model not in ["kokoro", "edge", "edge-xtts", "xtts"]:
         raise HTTPException(
-            status_code=400,
-            detail="Modelo deve ser: kokoro, edge, edge-xtts ou xtts"
+            status_code=400, detail="Modelo deve ser: kokoro, edge, edge-xtts ou xtts"
         )
 
     if request.model == "xtts" and not request.speaker_wav:
-        raise HTTPException(
-            status_code=400,
-            detail="XTTS requer speaker_wav"
-        )
+        raise HTTPException(status_code=400, detail="XTTS requer speaker_wav")
 
     if not (0.5 <= request.speed <= 2.0):
-        raise HTTPException(
-            status_code=400,
-            detail="Speed deve estar entre 0.5 e 2.0"
-        )
+        raise HTTPException(status_code=400, detail="Speed deve estar entre 0.5 e 2.0")
 
     # Criar job
     job_id = str(uuid.uuid4())
@@ -147,14 +147,15 @@ async def convert_audio(request: AudioRequest, background_tasks: BackgroundTasks
         model=request.model,
         voice=request.voice,
         speed=request.speed,
-        speaker_wav=request.speaker_wav
+        speaker_wav=request.speaker_wav,
     )
 
     return {
         "job_id": job_id,
         "status": "processing",
-        "message": "Conversão iniciada..."
+        "message": "Conversão iniciada...",
     }
+
 
 @app.get("/api/status/{job_id}")
 async def get_status(job_id: str):
@@ -164,6 +165,7 @@ async def get_status(job_id: str):
 
     job = jobs[job_id]
     return job.to_dict()
+
 
 @app.get("/api/download/{job_id}")
 async def download_audio(job_id: str):
@@ -175,18 +177,16 @@ async def download_audio(job_id: str):
 
     if job.status != "completed":
         raise HTTPException(
-            status_code=400,
-            detail=f"Áudio ainda não está pronto. Status: {job.status}"
+            status_code=400, detail=f"Áudio ainda não está pronto. Status: {job.status}"
         )
 
     if not job.output_file or not os.path.exists(job.output_file):
         raise HTTPException(status_code=404, detail="Arquivo não encontrado")
 
     return FileResponse(
-        job.output_file,
-        media_type="audio/mpeg",
-        filename=f"audiobook_{job_id[:8]}.mp3"
+        job.output_file, media_type="audio/mpeg", filename=f"audiobook_{job_id[:8]}.mp3"
     )
+
 
 @app.get("/api/models")
 async def get_models():
@@ -228,6 +228,7 @@ async def get_models():
         ]
     }
 
+
 @app.delete("/api/cleanup/{job_id}")
 async def cleanup_job(job_id: str):
     """Limpa os dados do job"""
@@ -238,19 +239,24 @@ async def cleanup_job(job_id: str):
     if job.output_file and os.path.exists(job.output_file):
         try:
             os.remove(job.output_file)
-        except:
+        except OSError:
             pass
 
     del jobs[job_id]
     return {"message": "Job removido"}
 
+
 # ============================================================
 # Processamento em Background
 # ============================================================
 
-def _process_audio(job_id: str, text: str, model: str, voice: str, speed: float, speaker_wav: str):
+
+def _process_audio(
+    job_id: str, text: str, model: str, voice: str, speed: float, speaker_wav: str
+):
     """Processa conversão de áudio em background"""
     job = jobs[job_id]
+    voice = resolve_voice(model, voice)
 
     try:
         job.status = "processing"
@@ -277,7 +283,7 @@ def _process_audio(job_id: str, text: str, model: str, voice: str, speed: float,
             model=model,
             speaker_wav=speaker_wav,
             voice=voice,
-            speed=speed
+            speed=speed,
         )
 
         if not files:
@@ -309,7 +315,7 @@ def _process_audio(job_id: str, text: str, model: str, voice: str, speed: float,
             output=output_file,
             provider=model,
             model=model_name,
-            voice=voice_label
+            voice=voice_label,
         )
 
         job.output_file = output_file
@@ -321,11 +327,13 @@ def _process_audio(job_id: str, text: str, model: str, voice: str, speed: float,
         job.error = str(e)
         job.message = f"Erro ao gerar áudio: {e}"
 
+
 # ============================================================
 # Inicializar servidor
 # ============================================================
 
 if __name__ == "__main__":
     import uvicorn
+
     print("🚀 Iniciando servidor em http://localhost:8000")
     uvicorn.run(app, host="0.0.0.0", port=8000)

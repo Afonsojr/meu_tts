@@ -30,6 +30,32 @@ EDGE_VOICES = {
     "pt-BR-AntonioNeural": "Antonio (Masculino)",
 }
 
+
+def resolve_voice(model, voice=None):
+    """Resolve uma voz segura para o modelo informado."""
+    if model == "edge":
+        if voice in EDGE_VOICES:
+            return voice
+        return EDGE_CONFIG["voice"]
+
+    if model == "edge-xtts":
+        if voice in EDGE_VOICES:
+            return voice
+        return EDGE_XTTS_CONFIG["edge_voice"]
+
+    if model == "kokoro":
+        if voice in {"pf_dora", "pm_alex", "pm_santa"}:
+            return voice
+        return KOKORO_CONFIG["voice"]
+
+    if model == "piper":
+        if voice in PIPER_VOICES:
+            return voice
+        return PIPER_CONFIG["default_voice"]
+
+    return voice
+
+
 # Configurações do XTTS v2
 XTTS_CONFIG = {
     "model_name": "tts_models/multilingual/multi-dataset/xtts_v2",

@@ -49,7 +49,7 @@ async def generate_speaker_reference():
     # Criar diretório se não existir
     os.makedirs("audio_references", exist_ok=True)
 
-    print(f"🎤 Gerando áudio de referência com Edge-TTS")
+    print("🎤 Gerando áudio de referência com Edge-TTS")
     print(f"   Voz: {voice}")
     print(f"   Taxa: {rate}")
     print(f"   Tom: {pitch}")
@@ -59,10 +59,7 @@ async def generate_speaker_reference():
     # Gerar áudio
     try:
         communicate = edge_tts.Communicate(
-            text=text,
-            voice=voice,
-            rate=rate,
-            pitch=pitch
+            text=text, voice=voice, rate=rate, pitch=pitch
         )
 
         print("🔄 Sintetizando áudio...")
@@ -71,26 +68,29 @@ async def generate_speaker_reference():
         # Converter WAV para MP3
         print("🔄 Convertendo WAV → MP3...")
         from pydub import AudioSegment
+
         audio = AudioSegment.from_wav(output_path_wav)
         audio.export(output_path_mp3, format="mp3", bitrate="192k")
         os.remove(output_path_wav)  # Remover WAV temporário
 
         # Informações do arquivo
         file_size = os.path.getsize(output_path_mp3) / 1024
-        print(f"✅ Áudio gerado com sucesso!")
+        print("✅ Áudio gerado com sucesso!")
         print(f"   📁 Localização: {output_path_mp3}")
         print(f"   📊 Tamanho: {file_size:.1f} KB")
 
-        print(f"\n💡 Como usar com XTTS v2:")
-        print(f"   uv run main.py livro.md --model xtts --speaker-wav {output_path}")
+        print("\n💡 Como usar com XTTS v2:")
+        print(
+            f"   uv run main.py livro.md --model xtts --speaker-wav {output_path_mp3}"
+        )
 
-        print(f"\n📝 Nome do arquivo indica:")
-        print(f"   - speaker_ref: arquivo de referência de voz")
-        print(f"   - edge-tts: gerado pelo Edge-TTS")
-        print(f"   - francisca: voz feminina Francisca")
-        print(f"   - timestamp: data/hora de geração")
+        print("\n📝 Nome do arquivo indica:")
+        print("   - speaker_ref: arquivo de referência de voz")
+        print("   - edge-tts: gerado pelo Edge-TTS")
+        print("   - francisca: voz feminina Francisca")
+        print("   - timestamp: data/hora de geração")
 
-        return output_path
+        return output_path_mp3
 
     except Exception as e:
         print(f"❌ Erro ao gerar áudio: {e}")

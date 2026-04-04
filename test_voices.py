@@ -9,7 +9,7 @@ import soundfile as sf
 import os
 
 # Inicializar pipeline
-pipeline = KPipeline(lang_code='p')
+pipeline = KPipeline(lang_code="p")
 
 # Texto de teste
 text_teste = "Olá, meu nome é assistente de voz. Como posso ajudar você hoje?"
@@ -20,19 +20,19 @@ os.makedirs(output_dir, exist_ok=True)
 
 # Vozes para testar (femininas primeiro)
 vozes_femininas = [
-    'pf_dora',
-    'pf_bella',
-    'pf_grace',
-    'pf_lucy',
-    'pf_nova',
+    "pf_dora",
+    "pf_bella",
+    "pf_grace",
+    "pf_lucy",
+    "pf_nova",
 ]
 
 vozes_masculinas = [
-    'pm_alex',
-    'pm_santa',
+    "pm_alex",
+    "pm_santa",
 ]
 
-print(f"Testando vozes do Kokoro TTS para português brasileiro...\n")
+print("Testando vozes do Kokoro TTS para português brasileiro...\n")
 print(f"Texto: '{text_teste}'\n")
 
 # Testar vozes femininas
@@ -50,11 +50,12 @@ for voice in vozes_femininas:
 
         if audio_segments:
             import numpy as np
+
             combined = np.concatenate(audio_segments)
             sf.write(output_path, combined, 24000)
-            print(f"  ✅ Sucesso\n")
+            print("  ✅ Sucesso\n")
         else:
-            print(f"  ❌ Nenhum áudio gerado\n")
+            print("  ❌ Nenhum áudio gerado\n")
     except Exception as e:
         print(f"  ⚠️  Erro: {e}\n")
 
@@ -73,11 +74,12 @@ for voice in vozes_masculinas:
 
         if audio_segments:
             import numpy as np
+
             combined = np.concatenate(audio_segments)
             sf.write(output_path, combined, 24000)
-            print(f"  ✅ Sucesso\n")
+            print("  ✅ Sucesso\n")
         else:
-            print(f"  ❌ Nenhum áudio gerado\n")
+            print("  ❌ Nenhum áudio gerado\n")
     except Exception as e:
         print(f"  ⚠️  Erro: {e}\n")
 
