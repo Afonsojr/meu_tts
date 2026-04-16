@@ -8,8 +8,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:dev": "PATH=$HOME/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH RUSTC=$HOME/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc tauri dev",
+    "tauri:build": "PATH=$HOME/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin:$PATH RUSTC=$HOME/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc tauri build"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",

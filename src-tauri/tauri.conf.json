@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/schema.json",
   "productName": "Audiobook TTS Workbench",
   "version": "0.1.0",
-  "identifier": "com.snow.meu_projeto_tts",
+  "identifier": "com.snow.meu-projeto-tts",
   "build": {
     "beforeDevCommand": "bun run dev",
     "beforeBuildCommand": "bun run build",
@@ -24,6 +24,12 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all"
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.png"
+    ]
   }
 }

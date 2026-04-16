@@ -443,6 +443,22 @@ function App() {
 
   const currentModelAllowsSpeed = currentModel?.supportsSpeed ?? false;
   const showSpeakerPicker = currentModel?.supportsSpeakerWav ?? false;
+  const sourceKindLabel =
+    inputKind === "directory"
+      ? "Pasta"
+      : inputKind === "files"
+        ? "Arquivos soltos"
+        : "Arquivo único";
+  const canStart =
+    !busy &&
+    inputs.length > 0 &&
+    outputDir.length > 0 &&
+    (!showSpeakerPicker || speakerWav.length > 0);
+  const validationHints = [
+    inputs.length > 0 ? null : "Escolha um arquivo ou uma pasta.",
+    outputDir ? null : "Defina a pasta de saída.",
+    showSpeakerPicker && !speakerWav ? "XTTS exige um WAV de referência." : null,
+  ].filter(Boolean) as string[];
 
   return (
     <div className="shell">
@@ -452,10 +468,10 @@ function App() {
       <header className="hero">
         <div>
           <p className="eyebrow">Audiobook TTS Workbench</p>
-          <h1>Converta novelas e textos com fluxo rápido, visual e local.</h1>
+          <h1>Uma bancada clara para transformar texto em áudio.</h1>
           <p className="hero-copy">
-            Selecione uma pasta ou arquivos, escolha o modelo, ajuste vozes e
-            acompanhe o progresso em tempo real sem sair do desktop.
+            Escolha a entrada, defina a saída, selecione modelo e voz, e veja o
+            progresso em tempo real sem perder a leitura do processo.
           </p>
         </div>
 
@@ -466,23 +482,40 @@ function App() {
           <div className="mini-progress">
             <span style={{ width: `${Math.max(totalProgress, 0) * 100}%` }} />
           </div>
+          <div className="hero-meta">
+            <span>{sourceKindLabel}</span>
+            <span>{inputs.length} entrada(s)</span>
+            <span>{outputDir ? "saída definida" : "sem saída"}</span>
+          </div>
         </div>
       </header>
 
       <main className="layout">
         <section className="stack">
-          <article className="panel">
+          <article className="panel stage-panel">
             <div className="panel-head">
               <div>
-                <p className="panel-kicker">Entrada</p>
-                <h2>Arquivos ou pasta</h2>
+                <p className="panel-kicker">01. Entrada</p>
+                <h2>Fonte de texto</h2>
               </div>
               <span className="panel-note">{selectedPreview}</span>
             </div>
 
+            <div className="source-switch">
+              <button className={inputKind === "file" ? "source-pill source-pill-active" : "source-pill"} onClick={chooseFiles}>
+                Um arquivo
+              </button>
+              <button className={inputKind === "files" ? "source-pill source-pill-active" : "source-pill"} onClick={chooseFiles}>
+                Vários arquivos
+              </button>
+              <button className={inputKind === "directory" ? "source-pill source-pill-active" : "source-pill"} onClick={chooseFolder}>
+                Pasta
+              </button>
+            </div>
+
             <div className="action-row">
               <button className="primary-button" onClick={chooseFiles}>
-                Escolher arquivos
+                Escolher markdown
               </button>
               <button className="secondary-button" onClick={chooseFolder}>
                 Escolher pasta
@@ -498,7 +531,7 @@ function App() {
                 ))
               ) : (
                 <p className="muted">
-                  Escolha um arquivo Markdown ou uma pasta com vários arquivos.
+                  Clique para selecionar um arquivo único, uma pasta ou vários `.md`.
                 </p>
               )}
               {inputs.length > 4 ? (
@@ -511,14 +544,14 @@ function App() {
             <div className="preview-block">
               <div className="preview-metric">
                 <strong>{previewLoading ? "..." : inputPreview?.file_count ?? inputs.length}</strong>
-                <span>arquivos Markdown detectados</span>
+                <span>arquivos detectados</span>
               </div>
               <div className="preview-copy">
                 <p>
                   {inputPreview
                     ? inputPreview.kind === "directory"
-                      ? "A pasta selecionada foi escaneada pelo backend."
-                      : "Arquivo carregado para conversão."
+                      ? "A pasta foi escaneada pelo backend e o app já sabe quantos capítulos processar."
+                      : "O arquivo está pronto para limpeza de Markdown e chunking."
                     : "Nenhum preview carregado ainda."}
                 </p>
                 {visibleFiles.length ? (
@@ -532,40 +565,80 @@ function App() {
             </div>
           </article>
 
-          <article className="panel">
-            <div className="panel-head">
-              <div>
-                <p className="panel-kicker">Saída</p>
-                <h2>Onde salvar</h2>
+          <div className="grid-two">
+            <article className="panel">
+              <div className="panel-head">
+                <div>
+                  <p className="panel-kicker">02. Saída</p>
+                  <h2>Destino</h2>
+                </div>
+                <span className="panel-note">
+                  {outputDir ? formatSelectionLabel(outputDir) : "Selecione uma pasta"}
+                </span>
               </div>
-              <span className="panel-note">
-                {outputDir ? formatSelectionLabel(outputDir) : "Nenhuma pasta definida"}
-              </span>
-            </div>
 
-            <div className="action-row">
-              <button className="primary-button" onClick={chooseOutputDir}>
-                Escolher pasta de saída
-              </button>
-              <button className="secondary-button" onClick={resetForm}>
-                Limpar tudo
-              </button>
-            </div>
+              <div className="action-row">
+                <button className="primary-button" onClick={chooseOutputDir}>
+                  Escolher pasta de saída
+                </button>
+                <button className="secondary-button" onClick={resetForm}>
+                  Limpar tudo
+                </button>
+              </div>
 
-            <div className="field">
-              <label htmlFor="output-dir">Destino selecionado</label>
-              <input id="output-dir" value={outputDir} readOnly placeholder="Selecione a pasta de saída" />
-            </div>
-          </article>
+              <div className="field">
+                <label htmlFor="output-dir">Pasta de destino</label>
+                <input
+                  id="output-dir"
+                  value={outputDir}
+                  readOnly
+                  placeholder="Selecione a pasta de saída"
+                />
+              </div>
+            </article>
+
+            <article className="panel">
+              <div className="panel-head">
+                <div>
+                  <p className="panel-kicker">03. Execução</p>
+                  <h2>Preset atual</h2>
+                </div>
+                <span className="panel-note">
+                  {loadingCatalog ? "Carregando..." : `${catalog?.models.length ?? 0} modelos`}
+                </span>
+              </div>
+
+              <div className="preset-summary">
+                <div>
+                  <span>Modelo</span>
+                  <strong>{currentModel?.name ?? model}</strong>
+                </div>
+                <div>
+                  <span>Voz</span>
+                  <strong>
+                    {currentModel?.id === "xtts"
+                      ? "WAV de referência"
+                      : selectedVoice ?? "automática"}
+                  </strong>
+                </div>
+                <div>
+                  <span>Velocidade</span>
+                  <strong>{currentModelAllowsSpeed ? `${speed.toFixed(1)}x` : "fixa"}</strong>
+                </div>
+              </div>
+            </article>
+          </div>
 
           <article className="panel">
             <div className="panel-head">
               <div>
-                <p className="panel-kicker">Modelo</p>
+                <p className="panel-kicker">04. Modelo e voz</p>
                 <h2>Motor TTS</h2>
               </div>
               <span className="panel-note">
-                {loadingCatalog ? "Carregando..." : `${catalog?.models.length ?? 0} disponíveis`}
+                {currentModel?.id === "xtts"
+                  ? "XTTS usa WAV"
+                  : "Filtre por nome ou código"}
               </span>
             </div>
 
@@ -591,79 +664,67 @@ function App() {
                     <div className="model-tags">
                       <span>{item.accent}</span>
                       <span>{item.supportsSpeakerWav ? "referência WAV" : "voz pronta"}</span>
-                      <span>{item.supportsSpeed ? "ajuste de velocidade" : "velocidade fixa"}</span>
+                      <span>{item.supportsSpeed ? "velocidade ajustável" : "velocidade fixa"}</span>
                     </div>
                   </button>
                 ))}
             </div>
-          </article>
 
-          <article className="panel">
-            <div className="panel-head">
-              <div>
-                <p className="panel-kicker">Voz</p>
-                <h2>Seleção e filtro</h2>
-              </div>
-              <span className="panel-note">
-                {currentModel?.id === "xtts"
-                  ? "XTTS usa WAV de referência"
-                  : "Filtre por nome ou código"}
-              </span>
+            <div className="voice-area">
+              {currentModel?.id === "xtts" ? (
+                <div className="reference-box">
+                  <div className="field">
+                    <label htmlFor="speaker-wav">Arquivo WAV de referência</label>
+                    <input
+                      id="speaker-wav"
+                      value={speakerWav}
+                      onChange={(event) => setSpeakerWav(event.target.value)}
+                      placeholder="Escolha o arquivo WAV de referência"
+                    />
+                  </div>
+                  <button className="secondary-button" onClick={chooseSpeakerWav}>
+                    Escolher WAV
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <div className="field">
+                    <label htmlFor="voice-filter">Buscar voz</label>
+                    <input
+                      id="voice-filter"
+                      value={voiceFilter}
+                      onChange={(event) => setVoiceFilter(event.target.value)}
+                      placeholder="Filtrar por nome ou código"
+                    />
+                  </div>
+
+                  <div className="voice-list">
+                    {availableVoices.map((voice) => (
+                      <button
+                        className={`voice-chip ${selectedVoice === voice.id ? "voice-chip-selected" : ""}`}
+                        key={voice.id}
+                        onClick={() => setSelectedVoice(voice.id)}
+                      >
+                        <strong>{voice.label}</strong>
+                        <span>{voice.id}</span>
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+              {showSpeakerPicker ? (
+                <p className="muted voice-note">
+                  XTTS trabalha com um arquivo WAV de referência, por isso a lista de vozes é escondida.
+                </p>
+              ) : null}
             </div>
-
-            {currentModel?.id === "xtts" ? (
-              <div className="reference-box">
-                <div className="field">
-                  <label htmlFor="speaker-wav">Arquivo WAV de referência</label>
-                  <input
-                    id="speaker-wav"
-                    value={speakerWav}
-                    onChange={(event) => setSpeakerWav(event.target.value)}
-                    placeholder="Escolha o arquivo WAV de referência"
-                  />
-                </div>
-                <button className="secondary-button" onClick={chooseSpeakerWav}>
-                  Escolher WAV
-                </button>
-              </div>
-            ) : (
-              <>
-                <div className="field">
-                  <label htmlFor="voice-filter">Filtro</label>
-                  <input
-                    id="voice-filter"
-                    value={voiceFilter}
-                    onChange={(event) => setVoiceFilter(event.target.value)}
-                    placeholder="Buscar voz..."
-                  />
-                </div>
-
-                <div className="voice-list">
-                  {availableVoices.map((voice) => (
-                    <button
-                      className={`voice-chip ${selectedVoice === voice.id ? "voice-chip-selected" : ""}`}
-                      key={voice.id}
-                      onClick={() => setSelectedVoice(voice.id)}
-                    >
-                      <strong>{voice.label}</strong>
-                      <span>{voice.id}</span>
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-            {showSpeakerPicker ? (
-              <p className="muted voice-note">
-                XTTS usa voz de referência e não lista vozes pré-definidas.
-              </p>
-            ) : null}
           </article>
 
           <details className="panel advanced-panel">
             <summary>
               <div>
-                <p className="panel-kicker">Avançado</p>
-                <h2>Parâmetros de execução</h2>
+                <p className="panel-kicker">05. Ajustes</p>
+                <h2>Parâmetros avançados</h2>
               </div>
               <span className="panel-note">Opcional</span>
             </summary>
@@ -678,7 +739,7 @@ function App() {
                   value={startAt}
                   onChange={(event) => setStartAt(Number(event.target.value) || 1)}
                 />
-                <small>Arquivo inicial na pasta ou chunk inicial no arquivo único.</small>
+                <small>Chunk inicial no arquivo único ou capítulo inicial na pasta.</small>
               </div>
 
               <div className="field">
@@ -690,7 +751,7 @@ function App() {
                   value={maxWorkers}
                   onChange={(event) => setMaxWorkers(Number(event.target.value) || 1)}
                 />
-                <small>Controle de paralelismo por chunk.</small>
+                <small>Paralelismo por chunk.</small>
               </div>
 
               <div className="field">
@@ -710,15 +771,18 @@ function App() {
             </div>
           </details>
 
-          <div className="footer-actions">
-            <button className="launch-button" onClick={startConversion} disabled={busy}>
+          <div className="execution-footer">
+            <div className="validation-list">
+              {validationHints.length ? (
+                validationHints.map((hint) => <span key={hint}>{hint}</span>)
+              ) : (
+                <span>Pronto para converter.</span>
+              )}
+            </div>
+
+            <button className="launch-button" onClick={startConversion} disabled={!canStart}>
               {busy ? "Processando..." : "Iniciar conversão"}
             </button>
-            <div className="status-pill">
-              <span />
-              <strong>{inputs.length} entrada(s)</strong>
-              <strong>{outputDir ? "saída pronta" : "sem saída"}</strong>
-            </div>
           </div>
 
           {error ? <div className="error-box">{error}</div> : null}
@@ -785,7 +849,9 @@ function App() {
                     <p key={`${index}-${line}`}>{line}</p>
                   ))
               ) : (
-                <p className="muted">Os eventos aparecerão aqui quando a conversão começar.</p>
+                <p className="muted">
+                  Os eventos aparecerão aqui quando a conversão começar.
+                </p>
               )}
             </div>
           </article>
