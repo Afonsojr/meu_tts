@@ -125,6 +125,8 @@ function App() {
   const [speed, setSpeed] = useState(1);
   const [startAt, setStartAt] = useState(1);
   const [maxWorkers, setMaxWorkers] = useState(2);
+  const [inputPreview, setInputPreview] = useState<InputPreview | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
   const [loadingCatalog, setLoadingCatalog] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -195,6 +197,52 @@ function App() {
     }
   }, [catalog, model, selectedVoice]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadPreview() {
+      if (!inputs.length || inputKind === null) {
+        setInputPreview(null);
+        return;
+      }
+
+      if (inputKind === "files" && inputs.length > 1) {
+        setInputPreview({
+          path: inputs[0],
+          kind: "directory",
+          file_count: inputs.length,
+          files: inputs.map((path) => formatSelectionLabel(path)),
+        });
+        return;
+      }
+
+      setPreviewLoading(true);
+      try {
+        const preview = await invoke<InputPreview>("inspect_input", {
+          path: inputs[0],
+        });
+        if (!cancelled) {
+          setInputPreview(preview);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setInputPreview(null);
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      } finally {
+        if (!cancelled) {
+          setPreviewLoading(false);
+        }
+      }
+    }
+
+    void loadPreview();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [inputs, inputKind]);
+
   const currentModel = catalog?.models.find((item) => item.id === model) ?? null;
   const availableVoices = useMemo(() => {
     if (!currentModel) {
@@ -231,6 +279,7 @@ function App() {
   }, [inputKind, inputs]);
 
   const totalProgress = job.totalChunks > 0 ? job.completedChunks / job.totalChunks : job.progress;
+  const visibleFiles = inputPreview?.files.slice(0, 3) ?? [];
 
   async function chooseFiles() {
     try {
@@ -458,6 +507,29 @@ function App() {
                 </span>
               ) : null}
             </div>
+
+            <div className="preview-block">
+              <div className="preview-metric">
+                <strong>{previewLoading ? "..." : inputPreview?.file_count ?? inputs.length}</strong>
+                <span>arquivos Markdown detectados</span>
+              </div>
+              <div className="preview-copy">
+                <p>
+                  {inputPreview
+                    ? inputPreview.kind === "directory"
+                      ? "A pasta selecionada foi escaneada pelo backend."
+                      : "Arquivo carregado para conversão."
+                    : "Nenhum preview carregado ainda."}
+                </p>
+                {visibleFiles.length ? (
+                  <ul>
+                    {visibleFiles.map((file) => (
+                      <li key={file}>{file}</li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            </div>
           </article>
 
           <article className="panel">
@@ -517,6 +589,7 @@ function App() {
                     </div>
                     <p>{item.description}</p>
                     <div className="model-tags">
+                      <span>{item.accent}</span>
                       <span>{item.supportsSpeakerWav ? "referência WAV" : "voz pronta"}</span>
                       <span>{item.supportsSpeed ? "ajuste de velocidade" : "velocidade fixa"}</span>
                     </div>
@@ -579,6 +652,11 @@ function App() {
                 </div>
               </>
             )}
+            {showSpeakerPicker ? (
+              <p className="muted voice-note">
+                XTTS usa voz de referência e não lista vozes pré-definidas.
+              </p>
+            ) : null}
           </article>
 
           <details className="panel advanced-panel">

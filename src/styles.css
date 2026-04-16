@@ -298,6 +298,52 @@ small {
   gap: 0.6rem;
 }
 
+.preview-block {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 1rem;
+  margin-top: 1rem;
+  padding: 0.95rem;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.preview-metric {
+  min-width: 8rem;
+  display: grid;
+  gap: 0.2rem;
+  align-content: start;
+}
+
+.preview-metric strong {
+  font-family: "Fraunces", Georgia, serif;
+  font-size: 2.2rem;
+  line-height: 1;
+}
+
+.preview-metric span {
+  color: var(--muted-deep);
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.preview-copy p {
+  margin: 0 0 0.7rem;
+  color: var(--muted);
+}
+
+.preview-copy ul {
+  margin: 0;
+  padding-left: 1rem;
+  color: var(--text);
+}
+
+.preview-copy li {
+  margin-bottom: 0.3rem;
+}
+
 .selection-chip,
 .muted-chip {
   display: inline-flex;
@@ -442,6 +488,10 @@ small {
 .voice-chip span {
   color: var(--muted-deep);
   font-size: 0.8rem;
+}
+
+.voice-note {
+  margin-top: 0.9rem;
 }
 
 .reference-box {
