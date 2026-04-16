@@ -1,174 +1,221 @@
-# Audiobook TTS - Kokoro + XTTS v2
+# Audiobook TTS
 
-Converte arquivos Markdown para Audiobook usando TTS (Text-to-Speech) em português brasileiro.
+Converte Markdown em audiolivro com TTS em português brasileiro.
 
-## Features
+O projeto tem duas formas de uso:
+- **CLI** para processar arquivos ou pastas `.md`
+- **API/Web** para converter texto via navegador ou HTTP
+- **Desktop Tauri** com interface visual para seleção de arquivos, pasta de saída e progresso
 
-✅ **Kokoro TTS** (padrão)
-- Leve (82M parâmetros)
-- Voz feminina brasileira nativa (`pf_dora`)
-- Funciona bem em CPU
-- Projeto mantido e ativo
+## Visão Geral
 
-✅ **XTTS v2** (clonagem de voz)
-- Clona voz de arquivo de referência
-- Alta qualidade
-- Suporta qualquer voz feminina brasileira
-- Requer GPU para performance ótima
+Modelos expostos na CLI:
+- **Kokoro**: padrão, leve e offline
+- **XTTS v2**: clonagem de voz a partir de `speaker_wav`
+- **Edge-TTS**: online, gratuito, voz pt-BR da Microsoft
+- **Edge-TTS + XTTS v2**: usa Edge como referência e XTTS para clonagem
 
 ## Instalação
 
-### Mínimo (Kokoro)
+### Básico
 ```bash
 git clone <repo>
 cd meu-projeto-tts
 uv sync
 ```
 
-### Completo (Kokoro + XTTS v2)
+### XTTS v2
 ```bash
-uv sync --all-extras
-# ou
 uv sync --extra xtts
 ```
 
-## Qualidade de código
+### Edge-TTS
+```bash
+uv sync --extra edge
+```
 
-### Ruff
+### Edge-TTS + XTTS v2
+```bash
+uv sync --extra edge-xtts
+```
+
+### Todos os extras
+```bash
+uv sync --all-extras
+```
+
+## Comandos Importantes
+
+### CLI principal
+```bash
+uv run main.py --help
+uv run main.py livro.md
+uv run main.py -i livro.md -m edge -o meu_audiobook.mp3
+uv run main.py livro.md --max-workers 4
+```
+
+### Script instalado pelo projeto
+```bash
+tts-audiobook livro.md
+```
+
+### Servidor web
+```bash
+uv run server.py
+```
+
+O servidor sobe em `http://localhost:8000`.
+
+### Desktop Tauri
+```bash
+bun run tauri:dev
+```
+
+O desktop usa o pipeline Python atual como bridge local e espera `python3`
+disponível no sistema. A UI permite escolher arquivos ou pasta, definir a
+pasta de saída, filtrar vozes e acompanhar o progresso por arquivo/chunk.
+
+### Qualidade de código
 ```bash
 uv run ruff check .
 uv run ruff format .
 ```
 
-Se preferir atalhos via `make`:
+Atalhos equivalentes via `make`:
 ```bash
 make lint
 make lint-fix
 make format
 ```
 
-## Uso
+### Verificação rápida de sintaxe
+```bash
+python3 -m py_compile main.py server.py
+```
 
-### Básico (Kokoro com voz feminina padrão)
+## Uso da CLI
+
+### Exemplos básicos
 ```bash
 uv run main.py livro.md
+uv run main.py livro.md --model edge
+uv run main.py livro.md --model xtts --speaker-wav minha_voz.wav
 ```
 
-### Customize velocidade (Kokoro)
+### Voz e velocidade
 ```bash
-uv run main.py livro.md --speed 0.9  # Mais lento
-uv run main.py livro.md --speed 1.2  # Mais rápido
-```
-
-### Vozes alternativas (Kokoro)
-```bash
-# Voz masculina (Alex)
 uv run main.py livro.md --voice pm_alex
-
-# Voz masculina (Santa)
 uv run main.py livro.md --voice pm_santa
+uv run main.py livro.md --speed 0.9
+uv run main.py livro.md --speed 1.2
 ```
 
-### XTTS v2 com clonagem de voz
-```bash
-uv run main.py livro.md \
-  --model xtts \
-  --speaker-wav caminho/para/sua_voz.wav
-```
-
-**Requisitos do arquivo WAV:**
-- Duração: 10-30 segundos
-- Formato: WAV mono
-- Taxa de amostragem: qualquer
-- Qualidade: voz limpa, sem ruído de fundo
-
-### Customize saída
+### Saída
 ```bash
 uv run main.py livro.md -o meu_audiobook.mp3
-uv run main.py livro.md --audio-dir saida/chunks
+uv run main.py livro.md --output-dir saida
 ```
 
-### Atalhos da CLI
+### Retomar a partir de um chunk
 ```bash
-uv run main.py -i livro.md -m edge -o meu_audiobook.mp3 -s 35
+uv run main.py livro.md --start-at 39
+uv run main.py livro.md -s 39
 ```
 
-Atalhos disponíveis:
-- `-i` = entrada
-- `-m` = modelo
-- `-o` = saída
-- `-s` = start-at
+`-s/--start-at` é `1-based`:
+- em **arquivo único**, começa do chunk indicado
+- em **pasta com `.md`**, pula os primeiros arquivos e começa no arquivo indicado
 
-### Pasta com vários arquivos `.md`
+### Processar uma pasta
 ```bash
 uv run main.py /meus/livros --model edge --output-dir /meus/livros/audio
 ```
 
-Isso gera um MP3 para cada `.md` encontrado na pasta de entrada, usando o mesmo nome base:
+Cada `.md` gera um `.mp3` com o mesmo nome base:
 - `capitulo1.md` -> `audio/capitulo1.mp3`
 - `capitulo2.md` -> `audio/capitulo2.mp3`
 
-Se uma execução travar no meio da pasta, você pode retomar a partir de um arquivo específico com `--start-at`:
+### Flags principais
+- `-i/--input`: arquivo ou pasta de entrada
+- `-m/--model`: `kokoro`, `xtts`, `edge` ou `edge-xtts`
+- `-o/--output`: arquivo de saída em modo arquivo único
+- `--output-dir`: diretório de saída em modo pasta
+- `--voice`: voz do modelo
+- `--speed`: velocidade de fala
+- `--speaker-wav`: arquivo WAV de referência para XTTS v2
+- `-s/--start-at`: chunk ou arquivo inicial
+- `--max-workers`: número máximo de workers para paralelizar chunks
+- `-q/--quiet`: reduz a saída no terminal
+
+Se `--max-workers` não for informado, o projeto usa o padrão definido em `config.py` por modelo.
+
+## Interface Web e API
+
+### Subir a API
 ```bash
-uv run main.py /meus/livros --model edge --output-dir /meus/livros/audio --start-at 35
-```
-Isso pula os 34 primeiros `.md` e começa no 35º arquivo da lista ordenada.
-
-Para um arquivo Markdown único, `--start-at` pula chunks internos. Exemplo:
-```bash
-uv run main.py livro.md --start-at 35
-```
-Isso começa do chunk 35.
-
-### Ver todas as opções
-```bash
-uv run main.py --help
-```
-
-## Exemplo Completo
-
-```bash
-# Gerar com Kokoro, voz feminina, velocidade 0.95x
-uv run main.py capitulo1.md -o capitulo1.mp3 --speed 0.95
-
-# Ou com XTTS v2, sua própria voz
-uv run main.py capitulo1.md \
-  --model xtts \
-  --speaker-wav minha_voz.wav \
-  -o capitulo1_minha_voz.mp3
+uv run server.py
 ```
 
-## Comparação Kokoro vs XTTS v2
+### Endpoints
+- `POST /api/convert`
+- `GET /api/status/{job_id}`
+- `GET /api/download/{job_id}`
+- `GET /api/models`
+- `DELETE /api/cleanup/{job_id}`
 
-| Aspecto | Kokoro | XTTS v2 |
-|---------|--------|---------|
-| Naturalidade | 8/10 | 9/10 |
-| Configuração | Fácil | Requer arquivo WAV |
-| Velocidade | Rápida (CPU ok) | Lenta (GPU melhor) |
-| Peso | Leve (82M) | Pesado (327M) |
-| Vozes pt-BR | 1 feminina | Infinitas (clonagem) |
-| Manutenção | Ativo | Encerrado |
+### Exemplo de conversão
+```bash
+curl -X POST http://localhost:8000/api/convert \
+  -H "Content-Type: application/json" \
+  -d '{
+    "text": "Seu texto aqui",
+    "model": "kokoro",
+    "voice": "pf_dora",
+    "speed": 1.0
+  }'
+```
+
+## Estrutura do Projeto
+
+- `main.py`: entrada da CLI
+- `server.py`: API FastAPI e interface web
+- `md_to_text.py`: limpeza de Markdown
+- `chunker.py`: divisão em chunks
+- `generate_audio.py`: geração dos arquivos de áudio
+- `merge_audio.py`: merge final em MP3
+- `config.py`: configurações de modelos e vozes
+- `templates/` e `static/`: interface web
 
 ## Troubleshooting
 
-### "ModuleNotFoundError: No module named 'TTS'"
-Você está tentando usar XTTS mas não instalou. Execute:
+### `ModuleNotFoundError: No module named 'TTS'`
+Instale os extras de XTTS:
 ```bash
 uv sync --extra xtts
 ```
 
-### XTTS muito lento
-Confira se tem GPU disponível. Configure em `config.py`:
-```python
-XTTS_CONFIG['device'] = 'cuda'  # ou 'cpu'
+### `ModuleNotFoundError: No module named 'edge_tts'`
+Instale o extra de Edge:
+```bash
+uv sync --extra edge
 ```
 
-### Áudio com qualidade ruim
-- Para Kokoro: tente ajustar `--speed`
-- Para XTTS: use arquivo WAV de melhor qualidade
+### XTTS pede `speaker_wav`
+Use um WAV limpo de referência com voz única e sem ruído.
 
-## Licenses
+### Edge-TTS falha
+O Edge-TTS depende de internet. Verifique conexão e DNS.
 
-- **Kokoro**: MIT (hexgrad/Kokoro-82M)
-- **XTTS v2**: CPML (Coqui TTS)
-- **pydub**: MIT
+### Áudio ruim ou robótico
+- tente ajustar `--speed`
+- use um `speaker_wav` mais limpo no XTTS
+- teste outro modelo para comparar
+
+### `--start-at` fora do intervalo
+O valor precisa ser `>= 1` e não pode ultrapassar a quantidade de chunks ou arquivos encontrados.
+
+## Licenças
+
+- Kokoro: MIT
+- XTTS v2 / Coqui TTS: CPML
+- pydub: MIT

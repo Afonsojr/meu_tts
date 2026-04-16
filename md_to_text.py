@@ -2,6 +2,8 @@ import re
 
 
 def clean_markdown(md_text: str) -> str:
+    md_text = re.sub(r"\r\n?", "\n", md_text)
+
     # remove blocos de código
     md_text = re.sub(r"```.*?```", "", md_text, flags=re.DOTALL)
 
@@ -27,9 +29,15 @@ def clean_markdown(md_text: str) -> str:
     # remove blockquotes
     md_text = re.sub(r"^>\s+", "", md_text, flags=re.MULTILINE)
 
-    # normaliza espaçamento
-    md_text = re.sub(r"\s+", " ", md_text)  # múltiplos espaços → um espaço
-    md_text = re.sub(r"(\n\s*)+", "\n", md_text)  # múltiplas linhas em branco
+    # normaliza espaçamento preservando parágrafos
     md_text = md_text.replace("—", "-")  # travessão → hífen
+    md_text = re.sub(r"\n{3,}", "\n\n", md_text)
 
-    return md_text.strip()
+    paragraphs = []
+    for block in re.split(r"\n\s*\n+", md_text):
+        block = re.sub(r"\s*\n\s*", " ", block)
+        block = re.sub(r"\s+", " ", block).strip()
+        if block:
+            paragraphs.append(block)
+
+    return "\n\n".join(paragraphs).strip()

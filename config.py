@@ -91,7 +91,17 @@ PIPER_VOICES = {
 OUTPUT_DIR = "audio"
 FINAL_OUTPUT = "audiobook.mp3"
 MP3_BITRATE = "192k"
-SILENCE_DURATION = 400  # ms entre chunks
+CHUNK_SILENCE_DURATION = 250  # ms entre chunks do mesmo parágrafo
+PARAGRAPH_SILENCE_DURATION = 700  # ms entre parágrafos
+SILENCE_DURATION = CHUNK_SILENCE_DURATION  # compatibilidade com código antigo
+DEFAULT_GENERATION_WORKERS = 2
+GENERATION_WORKERS = {
+    "kokoro": 2,
+    "xtts": 2,
+    "edge": 4,
+    "edge-xtts": 4,
+    "piper": 2,
+}
 
 # Configurações de texto
 MAX_CHUNK_SIZE = 400  # caracteres

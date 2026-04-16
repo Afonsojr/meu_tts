@@ -23,6 +23,9 @@ Uso:
 
   # Kokoro com voz diferente e velocidade customizada
   uv run main.py livro.md --voice pm_alex --speed 0.9
+
+  # Ajustar paralelismo por chunk
+  uv run main.py livro.md --max-workers 4
 """
 
 import argparse
@@ -48,6 +51,7 @@ def _process_single_file(
     speed: float,
     quiet: bool,
     start_at: int = 1,
+    max_workers: int | None = None,
 ):
     """Processa um único arquivo Markdown e gera um MP3 final."""
     voice = resolve_voice(model, voice)
@@ -89,6 +93,7 @@ def _process_single_file(
             voice=voice,
             speed=speed,
             start_at=start_at,
+            max_workers=max_workers,
         )
 
         if not files:
@@ -210,6 +215,16 @@ def main():
         "-q", "--quiet", action="store_true", help="Suprime mensagens de progresso"
     )
 
+    parser.add_argument(
+        "--max-workers",
+        type=int,
+        default=None,
+        help=(
+            "Número máximo de workers para paralelizar chunks; "
+            "se omitido, usa o padrão do modelo"
+        ),
+    )
+
     args = parser.parse_args()
     input_value = args.input_flag or args.input_positional
     if not input_value:
@@ -299,6 +314,7 @@ def main():
                     args.speed,
                     args.quiet,
                     start_at=1,
+                    max_workers=args.max_workers,
                 )
         else:
             # Em arquivo único, o índice se aplica aos chunks internos.
@@ -316,6 +332,7 @@ def main():
                 args.speed,
                 args.quiet,
                 start_at=args.start_at,
+                max_workers=args.max_workers,
             )
 
             if not args.quiet:

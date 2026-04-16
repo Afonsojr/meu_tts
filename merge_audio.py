@@ -1,6 +1,8 @@
 from pydub import AudioSegment
 import os
 
+from config import CHUNK_SILENCE_DURATION, PARAGRAPH_SILENCE_DURATION
+
 
 def merge(files, output="final.mp3", provider=None, model=None, voice=None):
     """
@@ -19,16 +21,43 @@ def merge(files, output="final.mp3", provider=None, model=None, voice=None):
     if not files:
         raise ValueError("Lista de arquivos vazia. Nenhum áudio foi gerado.")
 
+    normalized_files = []
+    for file_item in files:
+        if isinstance(file_item, dict):
+            normalized_files.append(
+                {
+                    "path": file_item["path"],
+                    "paragraph_end": bool(file_item.get("paragraph_end")),
+                }
+            )
+        else:
+            normalized_files.append({"path": file_item, "paragraph_end": False})
+
     # Validar existência de arquivos
-    missing_files = [f for f in files if not os.path.exists(f)]
+    missing_files = [
+        file_item["path"]
+        for file_item in normalized_files
+        if not os.path.exists(file_item["path"])
+    ]
     if missing_files:
         raise FileNotFoundError(f"Arquivos não encontrados: {missing_files}")
 
     combined = AudioSegment.empty()
 
-    for f in files:
-        audio = AudioSegment.from_wav(f)
-        combined += audio + AudioSegment.silent(duration=400)
+    for index, file_item in enumerate(normalized_files):
+        audio = AudioSegment.from_wav(file_item["path"])
+        combined += audio
+
+        if index == len(normalized_files) - 1:
+            continue
+
+        pause_ms = (
+            PARAGRAPH_SILENCE_DURATION
+            if file_item["paragraph_end"]
+            else CHUNK_SILENCE_DURATION
+        )
+        if pause_ms > 0:
+            combined += AudioSegment.silent(duration=pause_ms)
 
     # Exportar com qualidade melhor (160 kbps)
     combined.export(output, format="mp3", bitrate="160k")
