@@ -213,6 +213,10 @@ function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [lastInputDir, setLastInputDir] = useState<string>(() => localStorage.getItem("lastInputDir") || "");
+  const [lastOutputDir, setLastOutputDir] = useState<string>(() => localStorage.getItem("lastOutputDir") || "");
+  const [jobStartTime, setJobStartTime] = useState<number | null>(null);
+  const [finalJobTime, setFinalJobTime] = useState<number | null>(null);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -246,7 +250,23 @@ function App() {
 
       if (payload.status === "completed") {
         setBusy(false);
+        if (jobStartTime && jobStartTime > 0) {
+          const elapsed = Math.round((Date.now() - jobStartTime) / 1000);
+          setFinalJobTime(elapsed);
+          console.log("Desktop completed! elapsed:", elapsed);
+        } else {
+          console.log("Desktop completed but jobStartTime is:", jobStartTime);
+        }
       }
+
+      if (payload.status === "running") {
+        if (!jobStartTime) {
+          setJobStartTime(Date.now());
+          console.log("Desktop starting timer:", Date.now());
+        }
+      }
+
+      console.log("Desktop event status:", payload.status);
 
       if (payload.status === "error") {
         setBusy(false);
@@ -414,6 +434,7 @@ function App() {
       const picked = await open({
         multiple: true,
         directory: false,
+        defaultPath: lastInputDir || undefined,
         filters: [
           {
             name: "Markdown",
@@ -429,6 +450,15 @@ function App() {
       const normalized = Array.isArray(picked) ? picked : [picked];
       setInputs(normalized);
       setSourceMode(normalized.length > 1 ? "files" : "file");
+      if (normalized.length > 0) {
+        const firstPath = normalized[0];
+        const lastSep = Math.max(firstPath.lastIndexOf("/"), firstPath.lastIndexOf("\\"));
+        if (lastSep > 0) {
+          const dirPath = firstPath.substring(0, lastSep);
+          setLastInputDir(dirPath);
+          localStorage.setItem("lastInputDir", dirPath);
+        }
+      }
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -440,6 +470,7 @@ function App() {
       const picked = await open({
         directory: true,
         multiple: false,
+        defaultPath: lastInputDir || undefined,
       });
 
       if (!picked || Array.isArray(picked)) {
@@ -448,6 +479,8 @@ function App() {
 
       setInputs([picked]);
       setSourceMode("directory");
+      setLastInputDir(picked);
+      localStorage.setItem("lastInputDir", picked);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -459,6 +492,7 @@ function App() {
       const picked = await open({
         directory: true,
         multiple: false,
+        defaultPath: lastOutputDir || undefined,
       });
 
       if (!picked || Array.isArray(picked)) {
@@ -466,6 +500,8 @@ function App() {
       }
 
       setOutputDir(picked);
+      setLastOutputDir(picked);
+      localStorage.setItem("lastOutputDir", picked);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -516,6 +552,9 @@ function App() {
   }
 
   async function startConversion() {
+    console.log("Start conversion called");
+    setJobStartTime(Date.now());
+    setFinalJobTime(null);
     if (!inputs.length) {
       setError("Escolha um arquivo ou uma pasta de entrada.");
       return;
@@ -606,6 +645,19 @@ function App() {
             ))}
           </div>
 
+          <div className="rounded-2xl border border-red-500/50 bg-red-500/10 px-4 py-3">
+            <p className="text-[0.7rem] uppercase tracking-[0.18em] text-muted-foreground">
+              Tempo
+            </p>
+            <p className="mt-1 text-xl font-bold font-mono" style={{ color: "#ff2200" }}>
+              {job.status === "completed" && finalJobTime !== null
+                ? `${finalJobTime}s`
+                : job.status === "running"
+                  ? "..."
+                  : "—"}
+            </p>
+          </div>
+
           <div className="flex items-start gap-3 rounded-2xl border border-white/8 bg-white/4 px-4 py-3">
             <span
               className={cn(
@@ -629,9 +681,7 @@ function App() {
                   </Badge>
                 ) : null}
               </div>
-              <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-                {job.message}
-              </p>
+              
             </div>
           </div>
         </header>
@@ -867,9 +917,9 @@ function App() {
                       <p className="text-sm leading-relaxed text-muted-foreground">
                         {inputPreview
                           ? inputPreview.kind === "directory"
-                            ? "A pasta foi escaneada pelo backend e o app já sabe quantos capítulos processar."
-                            : "O arquivo está pronto para limpeza de Markdown e chunking."
-                          : "Nenhum preview carregado ainda."}
+                            ? `${inputPreview.file_count} arquivos`
+                            : "Pronto para converter"
+                          : "Nenhum arquivo selecionado"}
                       </p>
                     </div>
                   </div>
@@ -961,7 +1011,7 @@ function App() {
                     </p>
                     <p className="mt-1 text-sm text-foreground">
                       {job.current_file_name
-                        ? `${job.current_file_index}/${job.total_files} · ${job.current_file_name}`
+                        ? `${job.current_file_index}/${job.total_files}`
                         : "Aguardando entrada"}
                     </p>
                   </div>
@@ -1058,56 +1108,7 @@ function App() {
           </Card>
         </main>
 
-        <Card className="border-white/10 bg-card/90">
-          <CardHeader>
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.24em] text-muted-foreground">
-                  Log
-                </p>
-                <CardTitle className="mt-1 text-2xl">Eventos recentes</CardTitle>
-              </div>
-              <Badge variant="outline">{logs.length} linhas</Badge>
-            </div>
-            <CardDescription>
-              Os eventos ficam visíveis durante a execução para rastrear o pipeline sem abrir o
-              terminal.
-            </CardDescription>
-          </CardHeader>
-
-          <CardContent>
-            <ScrollArea className="h-80 pr-3">
-              <div className="grid gap-2">
-                {logs.length ? (
-                  logs
-                    .slice(-20)
-                    .reverse()
-                    .map((line, index) => (
-                      <div
-                        key={`${index}-${line}`}
-                        className="rounded-2xl border border-white/8 bg-white/4 px-4 py-3 text-sm leading-relaxed text-muted-foreground"
-                      >
-                        {line}
-                      </div>
-                    ))
-                ) : (
-                  <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] px-4 py-10 text-center">
-                    <p className="text-sm text-muted-foreground">
-                      Os eventos aparecerão aqui quando a conversão começar.
-                    </p>
-                  </div>
-                )}
-              </div>
-            </ScrollArea>
-          </CardContent>
-          <CardFooter className="justify-between gap-3 border-t border-border/60 pt-0">
-            <div className="flex items-center gap-2 text-xs uppercase tracking-[0.18em] text-muted-foreground">
-              <SlidersHorizontal className="size-4 text-primary" />
-              {showSpeakerPicker ? "XTTS com WAV obrigatório" : "Voz e velocidade ajustáveis"}
-            </div>
-            <div className="text-xs text-muted-foreground">{currentModel?.name ?? model}</div>
-          </CardFooter>
-        </Card>
+        
       </div>
     </div>
   );

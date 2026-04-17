@@ -203,6 +203,7 @@ function App() {
         setEtaSeconds(null);
         setCurrentFileStart(null);
         setFinalJobTime(elapsed);
+        console.log("Job completed! elapsed:", elapsed, "startTime:", jobStartTime);
       }
 
       if (payload.status === "cancelled") {
@@ -213,9 +214,14 @@ function App() {
         setFinalJobTime(elapsed);
       }
 
-      if (payload.status === "running" && jobStartTime === null) {
-        setJobStartTime(Date.now());
+      if (payload.status === "running") {
+        if (jobStartTime === null) {
+          setJobStartTime(Date.now());
+          console.log("Starting timer:", Date.now());
+        }
       }
+
+      console.log("Event status:", payload.status);
 
       if (payload.status === "running" && payload.total_chunks > 0 && payload.completed_chunks > 0) {
         const elapsed = (Date.now() - (jobStartTime || Date.now())) / 1000;
@@ -490,6 +496,8 @@ function App() {
   }
 
   async function startConversion() {
+    setJobStartTime(Date.now());
+    setFinalJobTime(null);
     if (!inputs.length) {
       setError("Escolha um arquivo ou uma pasta de entrada.");
       return;
@@ -667,7 +675,19 @@ function App() {
             />
             <div>
               <strong>{job.status}</strong>
-              <p>{job.message}</p>
+            </div>
+          </div>
+
+          <div className="topbar-stats">
+            <div>
+              <span>Tempo</span>
+              <strong style={{ color: "#ff2200" }}>
+                {job.status === "completed" && finalJobTime !== null
+                  ? `${finalJobTime}s`
+                  : job.status === "running"
+                    ? "..."
+                    : "—"}
+              </strong>
             </div>
           </div>
 
@@ -766,17 +786,10 @@ function App() {
                   <p>
                     {inputPreview
                       ? inputPreview.kind === "directory"
-                        ? "A pasta foi escaneada pelo backend e o app já sabe quantos capítulos processar."
-                        : "O arquivo está pronto para limpeza de Markdown e chunking."
-                      : "Nenhum preview carregado ainda."}
+                        ? `${inputPreview.file_count} arquivos encontrados`
+                        : "Pronto para converter"
+                      : "Nenhum arquivo selecionado"}
                   </p>
-                  {visibleFiles.length ? (
-                    <ul>
-                      {visibleFiles.map((file) => (
-                        <li key={file}>{file}</li>
-                      ))}
-                    </ul>
-                  ) : null}
                 </div>
               </div>
             </article>
@@ -796,13 +809,12 @@ function App() {
                   <strong>{formatPercent(totalProgress)}</strong>
                 </div>
                 <div className="progress-copy">
-                  <p>{job.message}</p>
                   <dl>
                     <div>
                       <dt>Arquivo</dt>
                       <dd>
                         {job.current_file_name
-                          ? `${job.current_file_index}/${job.total_files} · ${job.current_file_name}`
+                          ? `${job.current_file_index}/${job.total_files}`
                           : "Aguardando entrada"}
                       </dd>
                     </div>
@@ -1058,30 +1070,7 @@ function App() {
               {error ? <div className="error-box">{error}</div> : null}
             </article>
 
-            <article className="panel progress-panel">
-              <div className="panel-head">
-                <div>
-                  <p className="panel-kicker">Log</p>
-                  <h2>Eventos recentes</h2>
-                </div>
-                <span className="panel-note">{logs.length} linhas</span>
-              </div>
-
-              <div className="log-list">
-                {logs.length ? (
-                  logs
-                    .slice(-12)
-                    .reverse()
-                    .map((line, index) => (
-                      <p key={`${index}-${line}`}>{line}</p>
-                    ))
-                ) : (
-                  <p className="muted">
-                    Os eventos aparecerão aqui quando a conversão começar.
-                  </p>
-                )}
-              </div>
-            </article>
+            
 
             {job.status === "completed" && job.output_paths.length > 0 && (
               <article className="panel audio-player-panel">
