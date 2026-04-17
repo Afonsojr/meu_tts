@@ -1,6 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage/
+.venv/
+venv/
+env/
+ENV/
+build/
+dist/
+*.egg-info/
+.python-version
+
+# Node / React / Vite
 node_modules/
 dist/
+vite.svg
+*.tsbuildinfo
+coverage/
+.vite/
+.parcel-cache/
+.turbo/
+
+# Rust / Tauri
 src-tauri/target/
 src-tauri/gen/
-__pycache__/
-*.pyc
+target/
+!.cargo/config.toml
+
+# Desktop and editor clutter
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Local environment files
+.env
+.env.*
+!.env.example

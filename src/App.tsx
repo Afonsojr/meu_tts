@@ -94,21 +94,21 @@ const sourceModeOptions: Array<{
 }> = [
   {
     id: "file",
-    label: "Arquivo único",
-    description: "Um texto isolado, pronto para virar um MP3.",
-    actionLabel: "Escolher arquivo Markdown",
+    label: "Arquivo",
+    description: "Texto isolado → MP3",
+    actionLabel: "Selecionar arquivo",
   },
   {
     id: "files",
-    label: "Vários arquivos",
-    description: "Lote de capítulos para converter em sequência.",
-    actionLabel: "Escolher arquivos Markdown",
+    label: "Múltiplos arquivos",
+    description: "Capítulos em sequência",
+    actionLabel: "Selecionar arquivos",
   },
   {
     id: "directory",
     label: "Pasta",
-    description: "Uma pasta inteira escaneada pelo backend.",
-    actionLabel: "Escolher pasta de entrada",
+    description: "Escanear diretório",
+    actionLabel: "Selecionar pasta",
   },
 ];
 
@@ -747,7 +747,7 @@ function App() {
                   ))
                 ) : (
                   <p className="muted">
-                    Escolha o modo e depois selecione o arquivo, a pasta ou o lote.
+                    Selecione o modo e depois o arquivo/pasta
                   </p>
                 )}
                 {inputs.length > 4 ? (
