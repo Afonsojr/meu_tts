@@ -159,6 +159,7 @@ function App() {
   const [etaSeconds, setEtaSeconds] = useState<number | null>(null);
   const [fileTimes, setFileTimes] = useState<number[]>([]);
   const [currentFileStart, setCurrentFileStart] = useState<number | null>(null);
+  const [jobEndTime, setJobEndTime] = useState<number | null>(null);
   const [playingAudio, setPlayingAudio] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [lastInputDir, setLastInputDir] = useState<string>(() => localStorage.getItem("lastInputDir") || "");
@@ -199,6 +200,12 @@ function App() {
         setJobStartTime(null);
         setEtaSeconds(null);
         setCurrentFileStart(null);
+        setJobEndTime(Date.now());
+      }
+
+      if (payload.status === "cancelled") {
+        setBusy(false);
+        setJobEndTime(Date.now());
       }
 
       if (payload.status === "running" && jobStartTime === null) {
@@ -510,6 +517,7 @@ function App() {
       setLogs([]);
       setFileTimes([]);
       setCurrentFileStart(null);
+      setJobEndTime(null);
       setJob({
         ...defaultJobState,
         status: "queued",
@@ -811,6 +819,18 @@ function App() {
                       <div>
                         <dt>Média/arquivo</dt>
                         <dd>{formatEta(Math.round(avgFileTime))}</dd>
+                      </div>
+                    )}
+                    {job.status === "completed" && jobStartTime && jobEndTime && (
+                      <div>
+                        <dt>Tempo total</dt>
+                        <dd>{formatEta(Math.round((jobEndTime - jobStartTime) / 1000))}</dd>
+                      </div>
+                    )}
+                    {job.status === "cancelled" && jobStartTime && jobEndTime && (
+                      <div>
+                        <dt>Tempo gasto</dt>
+                        <dd>{formatEta(Math.round((jobEndTime - jobStartTime) / 1000))}</dd>
                       </div>
                     )}
                     <div>
