@@ -156,10 +156,10 @@ function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [jobStartTime, setJobStartTime] = useState<number | null>(null);
+  const [finalJobTime, setFinalJobTime] = useState<number | null>(null);
   const [etaSeconds, setEtaSeconds] = useState<number | null>(null);
   const [fileTimes, setFileTimes] = useState<number[]>([]);
   const [currentFileStart, setCurrentFileStart] = useState<number | null>(null);
-  const [jobEndTime, setJobEndTime] = useState<number | null>(null);
   const [playingAudio, setPlayingAudio] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [lastInputDir, setLastInputDir] = useState<string>(() => localStorage.getItem("lastInputDir") || "");
@@ -197,15 +197,20 @@ function App() {
 
       if (payload.status === "completed") {
         setBusy(false);
+        const endTime = Date.now();
+        const elapsed = jobStartTime ? Math.round((endTime - jobStartTime) / 1000) : null;
         setJobStartTime(null);
         setEtaSeconds(null);
         setCurrentFileStart(null);
-        setJobEndTime(Date.now());
+        setFinalJobTime(elapsed);
       }
 
       if (payload.status === "cancelled") {
         setBusy(false);
-        setJobEndTime(Date.now());
+        const endTime = Date.now();
+        const elapsed = jobStartTime ? Math.round((endTime - jobStartTime) / 1000) : null;
+        setJobStartTime(null);
+        setFinalJobTime(elapsed);
       }
 
       if (payload.status === "running" && jobStartTime === null) {
@@ -517,7 +522,7 @@ function App() {
       setLogs([]);
       setFileTimes([]);
       setCurrentFileStart(null);
-      setJobEndTime(null);
+      setFinalJobTime(null);
       setJob({
         ...defaultJobState,
         status: "queued",
@@ -821,16 +826,10 @@ function App() {
                         <dd>{formatEta(Math.round(avgFileTime))}</dd>
                       </div>
                     )}
-                    {job.status === "completed" && jobStartTime && jobEndTime && (
+                    {finalJobTime !== null && (
                       <div>
                         <dt>Tempo total</dt>
-                        <dd>{formatEta(Math.round((jobEndTime - jobStartTime) / 1000))}</dd>
-                      </div>
-                    )}
-                    {job.status === "cancelled" && jobStartTime && jobEndTime && (
-                      <div>
-                        <dt>Tempo gasto</dt>
-                        <dd>{formatEta(Math.round((jobEndTime - jobStartTime) / 1000))}</dd>
+                        <dd>{formatEta(finalJobTime)}</dd>
                       </div>
                     )}
                     <div>
