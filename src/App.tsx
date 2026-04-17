@@ -82,7 +82,35 @@ type JobState = {
   error: string | null;
 };
 
+type SourceMode = "file" | "files" | "directory";
+
 const modelOrder = ["kokoro", "edge", "piper", "edge-xtts", "xtts"];
+
+const sourceModeOptions: Array<{
+  id: SourceMode;
+  label: string;
+  description: string;
+  actionLabel: string;
+}> = [
+  {
+    id: "file",
+    label: "Arquivo único",
+    description: "Um texto isolado, pronto para virar um MP3.",
+    actionLabel: "Escolher arquivo Markdown",
+  },
+  {
+    id: "files",
+    label: "Vários arquivos",
+    description: "Lote de capítulos para converter em sequência.",
+    actionLabel: "Escolher arquivos Markdown",
+  },
+  {
+    id: "directory",
+    label: "Pasta",
+    description: "Uma pasta inteira escaneada pelo backend.",
+    actionLabel: "Escolher pasta de entrada",
+  },
+];
 
 const defaultJobState: JobState = {
   job_id: "",
@@ -113,9 +141,7 @@ function App() {
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [job, setJob] = useState<JobState>(defaultJobState);
   const [logs, setLogs] = useState<string[]>([]);
-  const [inputKind, setInputKind] = useState<"file" | "directory" | "files" | null>(
-    null,
-  );
+  const [sourceMode, setSourceMode] = useState<SourceMode>("file");
   const [inputs, setInputs] = useState<string[]>([]);
   const [outputDir, setOutputDir] = useState<string>("");
   const [speakerWav, setSpeakerWav] = useState<string>("");
@@ -127,7 +153,6 @@ function App() {
   const [maxWorkers, setMaxWorkers] = useState(2);
   const [inputPreview, setInputPreview] = useState<InputPreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
-  const [loadingCatalog, setLoadingCatalog] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -144,8 +169,7 @@ function App() {
       })
       .catch((err) => {
         setError(err instanceof Error ? err.message : String(err));
-      })
-      .finally(() => setLoadingCatalog(false));
+      });
 
     listen<ConversionEvent>("tts-event", (event) => {
       const payload = event.payload;
@@ -201,12 +225,12 @@ function App() {
     let cancelled = false;
 
     async function loadPreview() {
-      if (!inputs.length || inputKind === null) {
+      if (!inputs.length) {
         setInputPreview(null);
         return;
       }
 
-      if (inputKind === "files" && inputs.length > 1) {
+      if (sourceMode === "files" && inputs.length > 1) {
         setInputPreview({
           path: inputs[0],
           kind: "directory",
@@ -241,7 +265,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [inputs, inputKind]);
+  }, [inputs, sourceMode]);
 
   const currentModel = catalog?.models.find((item) => item.id === model) ?? null;
   const availableVoices = useMemo(() => {
@@ -267,19 +291,21 @@ function App() {
       return "Nenhuma entrada selecionada";
     }
 
-    if (inputKind === "directory") {
+    if (sourceMode === "directory") {
       return `${formatSelectionLabel(inputs[0])} · pasta`;
     }
 
-    if (inputKind === "file") {
+    if (sourceMode === "file") {
       return `${formatSelectionLabel(inputs[0])} · arquivo`;
     }
 
     return `${inputs.length} arquivos selecionados`;
-  }, [inputKind, inputs]);
+  }, [inputs, sourceMode]);
 
   const totalProgress = job.totalChunks > 0 ? job.completedChunks / job.totalChunks : job.progress;
   const visibleFiles = inputPreview?.files.slice(0, 3) ?? [];
+  const sourceModeConfig =
+    sourceModeOptions.find((item) => item.id === sourceMode) ?? sourceModeOptions[0];
 
   async function chooseFiles() {
     try {
@@ -300,7 +326,7 @@ function App() {
 
       const normalized = Array.isArray(picked) ? picked : [picked];
       setInputs(normalized);
-      setInputKind(normalized.length > 1 ? "files" : "file");
+      setSourceMode(normalized.length > 1 ? "files" : "file");
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -319,7 +345,7 @@ function App() {
       }
 
       setInputs([picked]);
-      setInputKind("directory");
+      setSourceMode("directory");
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -370,7 +396,7 @@ function App() {
 
   function resetForm() {
     setInputs([]);
-    setInputKind(null);
+    setSourceMode("file");
     setOutputDir("");
     setSpeakerWav("");
     setModel(catalog?.defaultModel ?? "kokoro");
@@ -443,12 +469,29 @@ function App() {
 
   const currentModelAllowsSpeed = currentModel?.supportsSpeed ?? false;
   const showSpeakerPicker = currentModel?.supportsSpeakerWav ?? false;
-  const sourceKindLabel =
-    inputKind === "directory"
-      ? "Pasta"
-      : inputKind === "files"
-        ? "Arquivos soltos"
-        : "Arquivo único";
+  const activeVoiceLabel = showSpeakerPicker
+    ? "WAV de referência"
+    : selectedVoice ?? "voz automática";
+  const selectedInputCount = inputPreview?.file_count ?? inputs.length;
+  const outputLabel = outputDir ? formatSelectionLabel(outputDir) : "sem saída";
+  const topRailStats = [
+    {
+      label: "Entrada",
+      value: sourceModeConfig.label,
+    },
+    {
+      label: "Arquivos",
+      value: String(selectedInputCount),
+    },
+    {
+      label: "Modelo",
+      value: currentModel?.name ?? model,
+    },
+    {
+      label: "Saída",
+      value: outputLabel,
+    },
+  ];
   const canStart =
     !busy &&
     inputs.length > 0 &&
@@ -465,124 +508,198 @@ function App() {
       <div className="ambient ambient-left" />
       <div className="ambient ambient-right" />
 
-      <header className="hero">
-        <div>
-          <p className="eyebrow">Audiobook TTS Workbench</p>
-          <h1>Uma bancada clara para transformar texto em áudio.</h1>
-          <p className="hero-copy">
-            Escolha a entrada, defina a saída, selecione modelo e voz, e veja o
-            progresso em tempo real sem perder a leitura do processo.
-          </p>
-        </div>
-
-        <div className="hero-card">
-          <span className="hero-card-label">Estado atual</span>
-          <strong>{job.status}</strong>
-          <p>{job.message}</p>
-          <div className="mini-progress">
-            <span style={{ width: `${Math.max(totalProgress, 0) * 100}%` }} />
+      <div className="workspace">
+        <header className="topbar panel">
+          <div className="brand-lockup">
+            <div className="brand-mark">T</div>
+            <div>
+              <p className="brand-kicker">Audiobook TTS Workbench</p>
+              <strong>Console de conversão</strong>
+            </div>
           </div>
-          <div className="hero-meta">
-            <span>{sourceKindLabel}</span>
-            <span>{inputs.length} entrada(s)</span>
-            <span>{outputDir ? "saída definida" : "sem saída"}</span>
-          </div>
-        </div>
-      </header>
 
-      <main className="layout">
-        <section className="stack">
-          <article className="panel stage-panel">
-            <div className="panel-head">
-              <div>
-                <p className="panel-kicker">01. Entrada</p>
-                <h2>Fonte de texto</h2>
+          <div className="topbar-stats">
+            {topRailStats.map((item) => (
+              <div key={item.label}>
+                <span>{item.label}</span>
+                <strong>{item.value}</strong>
               </div>
-              <span className="panel-note">{selectedPreview}</span>
-            </div>
+            ))}
+          </div>
 
-            <div className="source-switch">
-              <button className={inputKind === "file" ? "source-pill source-pill-active" : "source-pill"} onClick={chooseFiles}>
-                Um arquivo
-              </button>
-              <button className={inputKind === "files" ? "source-pill source-pill-active" : "source-pill"} onClick={chooseFiles}>
-                Vários arquivos
-              </button>
-              <button className={inputKind === "directory" ? "source-pill source-pill-active" : "source-pill"} onClick={chooseFolder}>
-                Pasta
-              </button>
+          <div className="topbar-signal">
+            <span
+              className={`topbar-dot ${
+                job.status === "error"
+                  ? "is-error"
+                  : job.status === "completed"
+                    ? "is-complete"
+                    : ""
+              }`}
+            />
+            <div>
+              <strong>{job.status}</strong>
+              <p>{job.message}</p>
             </div>
+          </div>
+        </header>
 
-            <div className="action-row">
-              <button className="primary-button" onClick={chooseFiles}>
-                Escolher markdown
-              </button>
-              <button className="secondary-button" onClick={chooseFolder}>
-                Escolher pasta
-              </button>
-            </div>
+        <main className="dashboard">
+          <section className="hero-grid">
+            <article className="panel story-panel">
+              <div className="panel-head">
+                <div>
+                  <p className="panel-kicker">Operação</p>
+                  <h1>
+                    Transforme textos longos em áudio sem perder o controle do processo.
+                  </h1>
+                </div>
+                <span className="panel-note">{selectedPreview}</span>
+              </div>
 
-            <div className="selection-list">
-              {selectedFiles.length ? (
-                selectedFiles.map((item) => (
-                  <span className="selection-chip" key={item}>
-                    {item}
+              <p className="hero-copy">
+                O fluxo foi desenhado para novels e lotes de capítulos. Primeiro a
+                origem, depois a saída, então o motor TTS e só no fim os ajustes finos.
+              </p>
+
+              <div className="source-grid">
+                {sourceModeOptions.map((item) => (
+                  <button
+                    className={`source-card ${
+                      sourceMode === item.id ? "source-card-selected" : ""
+                    }`}
+                    key={item.id}
+                    onClick={() => setSourceMode(item.id)}
+                  >
+                    <span className="source-card-kicker">
+                      {item.id === "file"
+                        ? "Entrada 1"
+                        : item.id === "files"
+                          ? "Entrada lote"
+                          : "Entrada pasta"}
+                    </span>
+                    <strong>{item.label}</strong>
+                    <p>{item.description}</p>
+                    <span className="source-card-foot">
+                      {sourceMode === item.id ? "Selecionado" : "Trocar"}
+                    </span>
+                  </button>
+                ))}
+              </div>
+
+              <div className="action-row">
+                <button
+                  className="primary-button"
+                  onClick={sourceMode === "directory" ? chooseFolder : chooseFiles}
+                >
+                  {sourceModeConfig.actionLabel}
+                </button>
+                <button className="secondary-button" onClick={resetForm}>
+                  Limpar tudo
+                </button>
+              </div>
+
+              <div className="selection-list">
+                {selectedFiles.length ? (
+                  selectedFiles.map((item) => (
+                    <span className="selection-chip" key={item}>
+                      {item}
+                    </span>
+                  ))
+                ) : (
+                  <p className="muted">
+                    Escolha o modo e depois selecione o arquivo, a pasta ou o lote.
+                  </p>
+                )}
+                {inputs.length > 4 ? (
+                  <span className="selection-chip muted-chip">
+                    +{inputs.length - 4} itens
                   </span>
-                ))
-              ) : (
-                <p className="muted">
-                  Clique para selecionar um arquivo único, uma pasta ou vários `.md`.
-                </p>
-              )}
-              {inputs.length > 4 ? (
-                <span className="selection-chip muted-chip">
-                  +{inputs.length - 4} itens
-                </span>
-              ) : null}
-            </div>
-
-            <div className="preview-block">
-              <div className="preview-metric">
-                <strong>{previewLoading ? "..." : inputPreview?.file_count ?? inputs.length}</strong>
-                <span>arquivos detectados</span>
-              </div>
-              <div className="preview-copy">
-                <p>
-                  {inputPreview
-                    ? inputPreview.kind === "directory"
-                      ? "A pasta foi escaneada pelo backend e o app já sabe quantos capítulos processar."
-                      : "O arquivo está pronto para limpeza de Markdown e chunking."
-                    : "Nenhum preview carregado ainda."}
-                </p>
-                {visibleFiles.length ? (
-                  <ul>
-                    {visibleFiles.map((file) => (
-                      <li key={file}>{file}</li>
-                    ))}
-                  </ul>
                 ) : null}
               </div>
-            </div>
-          </article>
 
-          <div className="grid-two">
+              <div className="preview-block">
+                <div className="preview-metric">
+                  <strong>{previewLoading ? "..." : selectedInputCount}</strong>
+                  <span>arquivos detectados</span>
+                </div>
+                <div className="preview-copy">
+                  <p>
+                    {inputPreview
+                      ? inputPreview.kind === "directory"
+                        ? "A pasta foi escaneada pelo backend e o app já sabe quantos capítulos processar."
+                        : "O arquivo está pronto para limpeza de Markdown e chunking."
+                      : "Nenhum preview carregado ainda."}
+                  </p>
+                  {visibleFiles.length ? (
+                    <ul>
+                      {visibleFiles.map((file) => (
+                        <li key={file}>{file}</li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
+              </div>
+            </article>
+
+            <article className="panel meter-panel">
+              <div className="panel-head">
+                <div>
+                  <p className="panel-kicker">Execução</p>
+                  <h2>Estado atual</h2>
+                </div>
+                <span className="panel-note">{formatPercent(totalProgress)}</span>
+              </div>
+
+              <div className="progress-visual">
+                <div className="progress-ring">
+                  <span style={{ "--progress": totalProgress } as CSSProperties} />
+                  <strong>{formatPercent(totalProgress)}</strong>
+                </div>
+                <div className="progress-copy">
+                  <p>{job.message}</p>
+                  <dl>
+                    <div>
+                      <dt>Arquivo</dt>
+                      <dd>
+                        {job.current_file_name
+                          ? `${job.current_file_index}/${job.total_files} · ${job.current_file_name}`
+                          : "Aguardando entrada"}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Chunk</dt>
+                      <dd>
+                        {job.total_chunks
+                          ? `${job.completed_chunks}/${job.total_chunks}`
+                          : "Sem chunks ainda"}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Saída</dt>
+                      <dd>{outputLabel}</dd>
+                    </div>
+                  </dl>
+                </div>
+              </div>
+            </article>
+          </section>
+
+          <section className="dashboard-grid">
             <article className="panel">
               <div className="panel-head">
                 <div>
-                  <p className="panel-kicker">02. Saída</p>
-                  <h2>Destino</h2>
+                  <p className="panel-kicker">Destino</p>
+                  <h2>Pasta de saída</h2>
                 </div>
                 <span className="panel-note">
-                  {outputDir ? formatSelectionLabel(outputDir) : "Selecione uma pasta"}
+                  {outputDir ? formatSelectionLabel(outputDir) : "Selecione a pasta"}
                 </span>
               </div>
 
               <div className="action-row">
                 <button className="primary-button" onClick={chooseOutputDir}>
                   Escolher pasta de saída
-                </button>
-                <button className="secondary-button" onClick={resetForm}>
-                  Limpar tudo
                 </button>
               </div>
 
@@ -594,18 +711,7 @@ function App() {
                   readOnly
                   placeholder="Selecione a pasta de saída"
                 />
-              </div>
-            </article>
-
-            <article className="panel">
-              <div className="panel-head">
-                <div>
-                  <p className="panel-kicker">03. Execução</p>
-                  <h2>Preset atual</h2>
-                </div>
-                <span className="panel-note">
-                  {loadingCatalog ? "Carregando..." : `${catalog?.models.length ?? 0} modelos`}
-                </span>
+                <small>Os MP3 serão gravados com o mesmo nome base do texto de entrada.</small>
               </div>
 
               <div className="preset-summary">
@@ -615,11 +721,7 @@ function App() {
                 </div>
                 <div>
                   <span>Voz</span>
-                  <strong>
-                    {currentModel?.id === "xtts"
-                      ? "WAV de referência"
-                      : selectedVoice ?? "automática"}
-                  </strong>
+                  <strong>{activeVoiceLabel}</strong>
                 </div>
                 <div>
                   <span>Velocidade</span>
@@ -627,236 +729,198 @@ function App() {
                 </div>
               </div>
             </article>
-          </div>
 
-          <article className="panel">
-            <div className="panel-head">
-              <div>
-                <p className="panel-kicker">04. Modelo e voz</p>
-                <h2>Motor TTS</h2>
-              </div>
-              <span className="panel-note">
-                {currentModel?.id === "xtts"
-                  ? "XTTS usa WAV"
-                  : "Filtre por nome ou código"}
-              </span>
-            </div>
-
-            <div className="model-grid">
-              {catalog?.models
-                .slice()
-                .sort((left, right) => {
-                  const leftIndex = modelOrder.indexOf(left.id);
-                  const rightIndex = modelOrder.indexOf(right.id);
-                  return leftIndex - rightIndex;
-                })
-                .map((item) => (
-                  <button
-                    className={`model-card ${model === item.id ? "model-card-selected" : ""}`}
-                    key={item.id}
-                    onClick={() => setModel(item.id)}
-                  >
-                    <div className="model-card-top">
-                      <strong>{item.name}</strong>
-                      <span>{item.offline ? "offline" : "online"}</span>
-                    </div>
-                    <p>{item.description}</p>
-                    <div className="model-tags">
-                      <span>{item.accent}</span>
-                      <span>{item.supportsSpeakerWav ? "referência WAV" : "voz pronta"}</span>
-                      <span>{item.supportsSpeed ? "velocidade ajustável" : "velocidade fixa"}</span>
-                    </div>
-                  </button>
-                ))}
-            </div>
-
-            <div className="voice-area">
-              {currentModel?.id === "xtts" ? (
-                <div className="reference-box">
-                  <div className="field">
-                    <label htmlFor="speaker-wav">Arquivo WAV de referência</label>
-                    <input
-                      id="speaker-wav"
-                      value={speakerWav}
-                      onChange={(event) => setSpeakerWav(event.target.value)}
-                      placeholder="Escolha o arquivo WAV de referência"
-                    />
-                  </div>
-                  <button className="secondary-button" onClick={chooseSpeakerWav}>
-                    Escolher WAV
-                  </button>
+            <article className="panel">
+              <div className="panel-head">
+                <div>
+                  <p className="panel-kicker">Motor</p>
+                  <h2>Modelos e vozes</h2>
                 </div>
-              ) : (
-                <>
-                  <div className="field">
-                    <label htmlFor="voice-filter">Buscar voz</label>
-                    <input
-                      id="voice-filter"
-                      value={voiceFilter}
-                      onChange={(event) => setVoiceFilter(event.target.value)}
-                      placeholder="Filtrar por nome ou código"
-                    />
+                <span className="panel-note">
+                  {currentModel?.id === "xtts" ? "XTTS usa WAV" : "Filtre por nome ou código"}
+                </span>
+              </div>
+
+              <div className="model-grid">
+                {catalog?.models
+                  .slice()
+                  .sort((left, right) => {
+                    const leftIndex = modelOrder.indexOf(left.id);
+                    const rightIndex = modelOrder.indexOf(right.id);
+                    return leftIndex - rightIndex;
+                  })
+                  .map((item) => (
+                    <button
+                      className={`model-card ${model === item.id ? "model-card-selected" : ""}`}
+                      key={item.id}
+                      onClick={() => setModel(item.id)}
+                    >
+                      <div className="model-card-top">
+                        <strong>{item.name}</strong>
+                        <span>{item.offline ? "offline" : "online"}</span>
+                      </div>
+                      <p>{item.description}</p>
+                      <div className="model-tags">
+                        <span>{item.accent}</span>
+                        <span>{item.supportsSpeakerWav ? "referência WAV" : "voz pronta"}</span>
+                        <span>{item.supportsSpeed ? "velocidade ajustável" : "velocidade fixa"}</span>
+                      </div>
+                    </button>
+                  ))}
+              </div>
+
+              <div className="voice-area">
+                {currentModel?.id === "xtts" ? (
+                  <div className="reference-box">
+                    <div className="field">
+                      <label htmlFor="speaker-wav">Arquivo WAV de referência</label>
+                      <input
+                        id="speaker-wav"
+                        value={speakerWav}
+                        onChange={(event) => setSpeakerWav(event.target.value)}
+                        placeholder="Escolha o arquivo WAV de referência"
+                      />
+                    </div>
+                    <button className="secondary-button" onClick={chooseSpeakerWav}>
+                      Escolher WAV
+                    </button>
                   </div>
+                ) : (
+                  <>
+                    <div className="field">
+                      <label htmlFor="voice-filter">Buscar voz</label>
+                      <input
+                        id="voice-filter"
+                        value={voiceFilter}
+                        onChange={(event) => setVoiceFilter(event.target.value)}
+                        placeholder="Filtrar por nome ou código"
+                      />
+                    </div>
 
-                  <div className="voice-list">
-                    {availableVoices.map((voice) => (
-                      <button
-                        className={`voice-chip ${selectedVoice === voice.id ? "voice-chip-selected" : ""}`}
-                        key={voice.id}
-                        onClick={() => setSelectedVoice(voice.id)}
-                      >
-                        <strong>{voice.label}</strong>
-                        <span>{voice.id}</span>
-                      </button>
-                    ))}
+                    <div className="voice-list">
+                      {availableVoices.map((voice) => (
+                        <button
+                          className={`voice-chip ${selectedVoice === voice.id ? "voice-chip-selected" : ""}`}
+                          key={voice.id}
+                          onClick={() => setSelectedVoice(voice.id)}
+                        >
+                          <strong>{voice.label}</strong>
+                          <span>{voice.id}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+                {showSpeakerPicker ? (
+                  <p className="muted voice-note">
+                    XTTS trabalha com um arquivo WAV de referência, por isso a lista de vozes é escondida.
+                  </p>
+                ) : null}
+              </div>
+            </article>
+
+            <article className="panel">
+              <div className="panel-head">
+                <div>
+                  <p className="panel-kicker">Ajustes</p>
+                  <h2>Parâmetros opcionais</h2>
+                </div>
+                <span className="panel-note">Expanda só se precisar</span>
+              </div>
+
+              <div className="advanced-grid">
+                <div className="field">
+                  <label htmlFor="start-at">Start at</label>
+                  <input
+                    id="start-at"
+                    type="number"
+                    min={1}
+                    value={startAt}
+                    onChange={(event) => setStartAt(Number(event.target.value) || 1)}
+                  />
+                  <small>Chunk inicial no arquivo único ou capítulo inicial na pasta.</small>
+                </div>
+
+                <div className="field">
+                  <label htmlFor="workers">Workers</label>
+                  <input
+                    id="workers"
+                    type="number"
+                    min={1}
+                    value={maxWorkers}
+                    onChange={(event) => setMaxWorkers(Number(event.target.value) || 1)}
+                  />
+                  <small>Paralelismo por chunk.</small>
+                </div>
+
+                <div className="field">
+                  <label htmlFor="speed">Velocidade</label>
+                  <input
+                    id="speed"
+                    type="range"
+                    min={0.5}
+                    max={2}
+                    step={0.1}
+                    value={speed}
+                    onChange={(event) => setSpeed(Number(event.target.value))}
+                    disabled={!currentModelAllowsSpeed}
+                  />
+                  <small>{currentModelAllowsSpeed ? `${speed.toFixed(1)}x` : "Fixo neste modelo"}</small>
+                </div>
+              </div>
+
+              <div className="execution-footer">
+                <div className="execution-copy">
+                  <div className="validation-list">
+                    {validationHints.length ? (
+                      validationHints.map((hint) => <span key={hint}>{hint}</span>)
+                    ) : (
+                      <span>Pronto para converter.</span>
+                    )}
                   </div>
-                </>
-              )}
-              {showSpeakerPicker ? (
-                <p className="muted voice-note">
-                  XTTS trabalha com um arquivo WAV de referência, por isso a lista de vozes é escondida.
-                </p>
-              ) : null}
-            </div>
-          </article>
-
-          <details className="panel advanced-panel">
-            <summary>
-              <div>
-                <p className="panel-kicker">05. Ajustes</p>
-                <h2>Parâmetros avançados</h2>
-              </div>
-              <span className="panel-note">Opcional</span>
-            </summary>
-
-            <div className="advanced-grid">
-              <div className="field">
-                <label htmlFor="start-at">Start at</label>
-                <input
-                  id="start-at"
-                  type="number"
-                  min={1}
-                  value={startAt}
-                  onChange={(event) => setStartAt(Number(event.target.value) || 1)}
-                />
-                <small>Chunk inicial no arquivo único ou capítulo inicial na pasta.</small>
-              </div>
-
-              <div className="field">
-                <label htmlFor="workers">Workers</label>
-                <input
-                  id="workers"
-                  type="number"
-                  min={1}
-                  value={maxWorkers}
-                  onChange={(event) => setMaxWorkers(Number(event.target.value) || 1)}
-                />
-                <small>Paralelismo por chunk.</small>
-              </div>
-
-              <div className="field">
-                <label htmlFor="speed">Velocidade</label>
-                <input
-                  id="speed"
-                  type="range"
-                  min={0.5}
-                  max={2}
-                  step={0.1}
-                  value={speed}
-                  onChange={(event) => setSpeed(Number(event.target.value))}
-                  disabled={!currentModelAllowsSpeed}
-                />
-                <small>{currentModelAllowsSpeed ? `${speed.toFixed(1)}x` : "Fixo neste modelo"}</small>
-              </div>
-            </div>
-          </details>
-
-          <div className="execution-footer">
-            <div className="validation-list">
-              {validationHints.length ? (
-                validationHints.map((hint) => <span key={hint}>{hint}</span>)
-              ) : (
-                <span>Pronto para converter.</span>
-              )}
-            </div>
-
-            <button className="launch-button" onClick={startConversion} disabled={!canStart}>
-              {busy ? "Processando..." : "Iniciar conversão"}
-            </button>
-          </div>
-
-          {error ? <div className="error-box">{error}</div> : null}
-        </section>
-
-        <aside className="sidebar">
-          <article className="panel progress-panel">
-            <div className="panel-head">
-              <div>
-                <p className="panel-kicker">Progresso</p>
-                <h2>Execução atual</h2>
-              </div>
-              <span className="panel-note">{formatPercent(totalProgress)}</span>
-            </div>
-
-            <div className="progress-visual">
-              <div className="progress-ring">
-                <span style={{ "--progress": totalProgress } as CSSProperties} />
-                <strong>{formatPercent(totalProgress)}</strong>
-              </div>
-              <div className="progress-copy">
-                <p>{job.message}</p>
-                <dl>
-                  <div>
-                    <dt>Arquivo</dt>
-                    <dd>
-                      {job.current_file_name
-                        ? `${job.current_file_index}/${job.total_files} · ${job.current_file_name}`
-                        : "Aguardando entrada"}
-                    </dd>
+                  <div className="status-pill">
+                    <span />
+                    <strong>{currentModel?.name ?? model}</strong>
+                    <span>{activeVoiceLabel}</span>
+                    <span>{outputLabel}</span>
                   </div>
-                  <div>
-                    <dt>Chunk</dt>
-                    <dd>
-                      {job.total_chunks
-                        ? `${job.completed_chunks}/${job.total_chunks}`
-                        : "Sem chunks ainda"}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Saída</dt>
-                    <dd>{outputDir || "Escolha uma pasta"}</dd>
-                  </div>
-                </dl>
-              </div>
-            </div>
-          </article>
+                </div>
 
-          <article className="panel log-panel">
-            <div className="panel-head">
-              <div>
-                <p className="panel-kicker">Log</p>
-                <h2>Eventos recentes</h2>
+                <button className="launch-button" onClick={startConversion} disabled={!canStart}>
+                  {busy ? "Processando..." : "Iniciar conversão"}
+                </button>
               </div>
-              <span className="panel-note">{logs.length} linhas</span>
-            </div>
 
-            <div className="log-list">
-              {logs.length ? (
-                logs
-                  .slice(-12)
-                  .reverse()
-                  .map((line, index) => (
-                    <p key={`${index}-${line}`}>{line}</p>
-                  ))
-              ) : (
-                <p className="muted">
-                  Os eventos aparecerão aqui quando a conversão começar.
-                </p>
-              )}
-            </div>
-          </article>
-        </aside>
-      </main>
+              {error ? <div className="error-box">{error}</div> : null}
+            </article>
+
+            <article className="panel progress-panel">
+              <div className="panel-head">
+                <div>
+                  <p className="panel-kicker">Log</p>
+                  <h2>Eventos recentes</h2>
+                </div>
+                <span className="panel-note">{logs.length} linhas</span>
+              </div>
+
+              <div className="log-list">
+                {logs.length ? (
+                  logs
+                    .slice(-12)
+                    .reverse()
+                    .map((line, index) => (
+                      <p key={`${index}-${line}`}>{line}</p>
+                    ))
+                ) : (
+                  <p className="muted">
+                    Os eventos aparecerão aqui quando a conversão começar.
+                  </p>
+                )}
+              </div>
+            </article>
+          </section>
+        </main>
+      </div>
     </div>
   );
 }

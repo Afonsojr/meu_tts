@@ -279,8 +279,9 @@ async fn run_worker(
         .ok_or_else(|| "Não foi possível resolver o diretório raiz".to_string())?
         .to_path_buf();
     let bridge_path = root_dir.join("desktop_bridge.py");
+    let python_path = resolve_python_executable(&root_dir)?;
 
-    let mut command = Command::new("python3");
+    let mut command = Command::new(&python_path);
     command
         .arg(&bridge_path)
         .arg("--output-dir")
@@ -320,12 +321,40 @@ async fn run_worker(
         .stderr
         .take()
         .ok_or_else(|| "Falha ao capturar stderr do bridge".to_string())?;
+    emit_status(
+        &app,
+        &JobSnapshot {
+            job_id: job_id.clone(),
+            status: "running".to_string(),
+            message: format!("Bridge iniciado com {}", python_path.display()),
+            progress: 0.0,
+            current_file_index: 0,
+            total_files: 0,
+            current_file_name: None,
+            current_chunk_index: 0,
+            current_chunk_total: 0,
+            completed_chunks: 0,
+            total_chunks: 0,
+            output_paths: vec![],
+            error: None,
+        },
+    );
 
     let stderr_job_id = job_id.clone();
     let stderr_app = app.clone();
+    let stderr_lines: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let stderr_lines_clone = stderr_lines.clone();
     tauri::async_runtime::spawn(async move {
         let mut reader = BufReader::new(stderr).lines();
         while let Ok(Some(line)) = reader.next_line().await {
+            {
+                let mut lines = stderr_lines_clone.lock().expect("stderr buffer poisoned");
+                lines.push(line.clone());
+                if lines.len() > 20 {
+                    let overflow = lines.len() - 20;
+                    lines.drain(0..overflow);
+                }
+            }
             let payload = FrontendEvent::Log {
                 job_id: stderr_job_id.clone(),
                 message: line,
@@ -341,15 +370,41 @@ async fn run_worker(
 
     let status = child.wait().await.map_err(|error| error.to_string())?;
     if !status.success() {
+        let buffered_stderr = {
+            let lines = stderr_lines.lock().expect("stderr buffer poisoned");
+            lines.join("\n")
+        };
+        let detail = if buffered_stderr.is_empty() {
+            "O processo do bridge terminou com erro".to_string()
+        } else {
+            format!(
+                "O processo do bridge terminou com erro.\n\nÚltimos logs:\n{}",
+                buffered_stderr
+            )
+        };
         set_job_error(
             &app,
             &state,
             &job_id,
-            "O processo do bridge terminou com erro".to_string(),
+            detail,
         )?;
     }
 
     Ok(())
+}
+
+fn resolve_python_executable(root_dir: &Path) -> Result<PathBuf, String> {
+    let venv_python = root_dir.join(".venv").join("bin").join("python");
+    if venv_python.exists() {
+        return Ok(venv_python);
+    }
+
+    let venv_python3 = root_dir.join(".venv").join("bin").join("python3");
+    if venv_python3.exists() {
+        return Ok(venv_python3);
+    }
+
+    Ok(PathBuf::from("python3"))
 }
 
 fn handle_bridge_line(

@@ -16,11 +16,16 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 
-from chunker import split_text
-from config import resolve_voice
-from generate_audio import generate
-from md_to_text import clean_markdown
-from merge_audio import merge
+IMPORT_ERROR: Exception | None = None
+
+try:
+    from chunker import split_text
+    from config import resolve_voice
+    from generate_audio import generate
+    from md_to_text import clean_markdown
+    from merge_audio import merge
+except Exception as exc:  # pragma: no cover - surfaced as structured runtime error
+    IMPORT_ERROR = exc
 
 
 @dataclass
@@ -146,6 +151,27 @@ def main() -> int:
     parser.add_argument("--start-at", type=int, default=1)
     parser.add_argument("--max-workers", type=int, default=None)
     args = parser.parse_args()
+
+    if IMPORT_ERROR is not None:
+        emit(
+            "log",
+            message=(
+                "Falha ao iniciar o bridge. "
+                f"Dependência ausente ou inválida: {IMPORT_ERROR}"
+            ),
+        )
+        emit(
+            "error",
+            message=(
+                "Falha ao iniciar o bridge. "
+                f"Dependência ausente ou inválida: {IMPORT_ERROR}"
+            ),
+            output_paths=[],
+            total_files=0,
+            total_chunks=0,
+            progress=0.0,
+        )
+        return 1
 
     raw_inputs = [Path(item).expanduser() for item in args.inputs]
     output_dir = Path(args.output_dir).expanduser()
