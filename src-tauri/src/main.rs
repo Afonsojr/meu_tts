@@ -10,7 +10,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             bridge::get_catalog,
             bridge::inspect_input,
-            bridge::start_conversion
+            bridge::start_conversion,
+            bridge::cancel_conversion
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

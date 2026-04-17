@@ -17,6 +17,24 @@ use uuid::Uuid;
 #[derive(Clone, Default)]
 pub struct AppState {
     jobs: Arc<Mutex<HashMap<String, JobSnapshot>>>,
+    active_processes: Arc<Mutex<HashMap<String, tokio::process::Child>>>,
+}
+
+#[tauri::command]
+pub async fn cancel_conversion(job_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let mut processes = state.active_processes.lock().expect("process store poisoned");
+    
+    if let Some(mut child) = processes.remove(&job_id) {
+        child.kill().await.map_err(|e| e.to_string())?;
+    }
+
+    let mut jobs = state.jobs.lock().expect("job store poisoned");
+    if let Some(job) = jobs.get_mut(&job_id) {
+        job.status = "cancelled".to_string();
+        job.message = "Conversão cancelada pelo usuário".to_string();
+    }
+
+    Ok(())
 }
 
 #[derive(Clone, Serialize)]
@@ -313,6 +331,12 @@ async fn run_worker(
     }
 
     let mut child = command.spawn().map_err(|error| error.to_string())?;
+
+    {
+        let mut processes = state.active_processes.lock().expect("process store poisoned");
+        processes.insert(job_id.clone(), child.inner().clone());
+    }
+
     let stdout = child
         .stdout
         .take()
@@ -388,6 +412,11 @@ async fn run_worker(
             &job_id,
             detail,
         )?;
+    }
+
+    {
+        let mut processes = state.active_processes.lock().expect("process store poisoned");
+        processes.remove(&job_id);
     }
 
     Ok(())

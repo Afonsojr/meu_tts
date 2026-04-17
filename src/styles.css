@@ -92,6 +92,25 @@ small {
   overflow: hidden;
 }
 
+.shell.dragging {
+  background: rgba(214, 161, 90, 0.05);
+}
+
+.shell.dragging::after {
+  content: "Solte os arquivos aqui";
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--accent);
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 9999;
+  pointer-events: none;
+}
+
 .workspace {
   position: relative;
   z-index: 1;
@@ -205,6 +224,26 @@ small {
   border-radius: 18px;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.025));
   border: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.theme-toggle {
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border);
+  color: var(--text);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.1rem;
+  transition: all 180ms ease;
+}
+
+.theme-toggle:hover {
+  background: rgba(255, 255, 255, 0.1);
+  transform: rotate(15deg);
 }
 
 .topbar-signal p {
@@ -465,6 +504,27 @@ small {
 .secondary-button:active,
 .launch-button:active {
   transform: translateY(0);
+}
+
+.cancel-button {
+  border-radius: 999px;
+  padding: 0.88rem 1.1rem;
+  font-weight: 800;
+  background: rgba(220, 38, 38, 0.15);
+  color: #fca5a5;
+  border: 1px solid rgba(220, 38, 38, 0.3);
+  transition: all 180ms ease;
+}
+
+.cancel-button:hover {
+  background: rgba(220, 38, 38, 0.25);
+  transform: translateY(-1px);
+}
+
+.launch-controls {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
 }
 
 .selection-list {
@@ -958,6 +1018,73 @@ small {
   }
 }
 
+.audio-player-panel {
+  grid-column: 1 / -1;
+}
+
+.audio-player-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.audio-player-item {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.85rem;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.audio-play-button {
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #1f1710;
+  border: none;
+  font-size: 0.9rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 180ms ease;
+  flex-shrink: 0;
+}
+
+.audio-play-button:hover {
+  transform: scale(1.05);
+}
+
+.audio-play-button.playing {
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(214, 161, 90, 0.4); }
+  50% { box-shadow: 0 0 0 8px rgba(214, 161, 90, 0); }
+}
+
+.audio-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.audio-info strong {
+  font-size: 0.9rem;
+}
+
+.audio-info span {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @media (max-width: 760px) {
   .shell {
     padding: 0.85rem;
@@ -1029,7 +1156,30 @@ small {
   --radius: 1rem;
 }
 
-@theme inline {
+:root.light {
+  color-scheme: light;
+  --background: oklch(0.99 0.01 260);
+  --foreground: oklch(0.15 0.02 270);
+  --card: oklch(0.98 0.01 260);
+  --card-foreground: oklch(0.15 0.02 270);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.15 0.02 270);
+  --primary: oklch(0.65 0.18 68);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.95 0.01 260);
+  --secondary-foreground: oklch(0.15 0.02 270);
+  --muted: oklch(0.92 0.01 260);
+  --muted-foreground: oklch(0.5 0.02 265);
+  --accent: oklch(0.9 0.08 68);
+  --accent-foreground: oklch(0.15 0.02 270);
+  --destructive: oklch(0.6 0.21 27);
+  --destructive-foreground: oklch(1 0 0);
+  --border: oklch(0.9 0.01 260 / 0.15);
+  --input: oklch(0.9 0.01 260 / 0.2);
+  --ring: oklch(0.65 0.18 68);
+}
+
+:root.light body {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -1075,6 +1225,13 @@ body {
     radial-gradient(circle at 12% 0%, rgb(212 154 103 / 0.16), transparent 26%),
     radial-gradient(circle at 88% 16%, rgb(115 150 208 / 0.18), transparent 24%),
     linear-gradient(180deg, rgb(18 17 27) 0%, rgb(11 11 16) 100%);
+}
+
+:root.light body {
+  background:
+    radial-gradient(circle at 12% 0%, rgb(212 154 103 / 0.12), transparent 26%),
+    radial-gradient(circle at 88% 16%, rgb(115 150 208 / 0.15), transparent 24%),
+    linear-gradient(180deg, rgb(250 250 252) 0%, rgb(245 245 250) 100%);
 }
 
 body::before {

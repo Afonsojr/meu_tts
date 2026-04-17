@@ -155,6 +155,10 @@ function App() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [jobStartTime, setJobStartTime] = useState<number | null>(null);
+  const [etaSeconds, setEtaSeconds] = useState<number | null>(null);
+  const [playingAudio, setPlayingAudio] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -187,6 +191,20 @@ function App() {
 
       if (payload.status === "completed") {
         setBusy(false);
+        setJobStartTime(null);
+        setEtaSeconds(null);
+      }
+
+      if (payload.status === "running" && jobStartTime === null) {
+        setJobStartTime(Date.now());
+      }
+
+      if (payload.status === "running" && payload.total_chunks > 0 && payload.completed_chunks > 0) {
+        const elapsed = (Date.now() - (jobStartTime || Date.now())) / 1000;
+        const chunksRemaining = payload.total_chunks - payload.completed_chunks;
+        const avgTimePerChunk = elapsed / payload.completed_chunks;
+        const eta = Math.round(chunksRemaining * avgTimePerChunk);
+        setEtaSeconds(eta);
       }
 
       if (payload.status === "error") {
@@ -202,6 +220,13 @@ function App() {
         unlisten();
       }
     };
+  }, []);
+
+  useEffect(() => {
+    const savedTheme = localStorage.getItem("theme");
+    if (savedTheme === "light") {
+      document.documentElement.classList.add("light");
+    }
   }, []);
 
   useEffect(() => {
@@ -302,7 +327,7 @@ function App() {
     return `${inputs.length} arquivos selecionados`;
   }, [inputs, sourceMode]);
 
-  const totalProgress = job.totalChunks > 0 ? job.completedChunks / job.totalChunks : job.progress;
+  const totalProgress = job.total_chunks > 0 ? job.completed_chunks / job.total_chunks : job.progress;
   const visibleFiles = inputPreview?.files.slice(0, 3) ?? [];
   const sourceModeConfig =
     sourceModeOptions.find((item) => item.id === sourceMode) ?? sourceModeOptions[0];
@@ -463,6 +488,30 @@ function App() {
     }
   }
 
+  async function cancelConversion() {
+    if (!job.job_id) return;
+    try {
+      await invoke("cancel_conversion", { jobId: job.job_id });
+      setBusy(false);
+      setJob((current) => ({
+        ...current,
+        status: "cancelled",
+        message: "Conversão cancelada pelo usuário",
+      }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  function formatEta(seconds: number | null): string {
+    if (seconds === null) return "--";
+    if (seconds < 60) return `${seconds}s`;
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+    const hours = Math.floor(seconds / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
+    return `${hours}h ${mins}m`;
+  }
+
   const selectedFiles = inputs
     .map((path) => formatSelectionLabel(path))
     .slice(0, 4);
@@ -504,7 +553,26 @@ function App() {
   ].filter(Boolean) as string[];
 
   return (
-    <div className="shell">
+    <div
+        className={`shell ${isDragging ? "dragging" : ""}`}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setIsDragging(true);
+        }}
+        onDragLeave={() => setIsDragging(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setIsDragging(false);
+          const files = Array.from(e.dataTransfer.files);
+          const mdFiles = files.filter(f => f.name.endsWith('.md') || f.name.endsWith('.markdown'));
+          if (mdFiles.length > 0) {
+            // For Tauri, we need to use the path from the file object
+            const paths = mdFiles.map(f => (f as any).path || f.name);
+            setInputs(paths);
+            setSourceMode(paths.length > 1 ? "files" : "file");
+          }
+        }}
+      >
       <div className="ambient ambient-left" />
       <div className="ambient ambient-right" />
 
@@ -542,6 +610,17 @@ function App() {
               <p>{job.message}</p>
             </div>
           </div>
+
+          <button
+            className="theme-toggle"
+            onClick={() => {
+              const isDark = document.documentElement.classList.toggle("light");
+              localStorage.setItem("theme", isDark ? "light" : "dark");
+            }}
+            title="Alternar modo"
+          >
+            {document.documentElement.classList.contains("light") ? "🌙" : "☀"}
+          </button>
         </header>
 
         <main className="dashboard">
@@ -675,6 +754,12 @@ function App() {
                           : "Sem chunks ainda"}
                       </dd>
                     </div>
+                    {etaSeconds !== null && (
+                      <div>
+                        <dt>ETA</dt>
+                        <dd>{formatEta(etaSeconds)}</dd>
+                      </div>
+                    )}
                     <div>
                       <dt>Saída</dt>
                       <dd>{outputLabel}</dd>
@@ -886,9 +971,16 @@ function App() {
                   </div>
                 </div>
 
-                <button className="launch-button" onClick={startConversion} disabled={!canStart}>
-                  {busy ? "Processando..." : "Iniciar conversão"}
-                </button>
+                <div className="launch-controls">
+                  {busy ? (
+                    <button className="cancel-button" onClick={cancelConversion}>
+                      Cancelar
+                    </button>
+                  ) : null}
+                  <button className="launch-button" onClick={startConversion} disabled={!canStart}>
+                    {busy ? "Processando..." : "Iniciar conversão"}
+                  </button>
+                </div>
               </div>
 
               {error ? <div className="error-box">{error}</div> : null}
@@ -918,6 +1010,52 @@ function App() {
                 )}
               </div>
             </article>
+
+            {job.status === "completed" && job.output_paths.length > 0 && (
+              <article className="panel audio-player-panel">
+                <div className="panel-head">
+                  <div>
+                    <p className="panel-kicker">Resultado</p>
+                    <h2>Arquivos gerados</h2>
+                  </div>
+                  <span className="panel-note">{job.output_paths.length} arquivos</span>
+                </div>
+
+                <div className="audio-player-list">
+                  {job.output_paths.map((path, index) => {
+                    const fileName = path.split(/[/\\]/).pop() || path;
+                    const isPlaying = playingAudio === path;
+                    return (
+                      <div key={path} className="audio-player-item">
+                        <button
+                          className={`audio-play-button ${isPlaying ? "playing" : ""}`}
+                          onClick={() => {
+                            if (isPlaying) {
+                              setPlayingAudio(null);
+                            } else {
+                              setPlayingAudio(path);
+                            }
+                          }}
+                        >
+                          {isPlaying ? "⏸" : "▶"}
+                        </button>
+                        <div className="audio-info">
+                          <strong>{fileName}</strong>
+                          <span>{path}</span>
+                        </div>
+                        {isPlaying && (
+                          <audio
+                            src={`file://${path}`}
+                            autoPlay
+                            onEnded={() => setPlayingAudio(null)}
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </article>
+            )}
           </section>
         </main>
       </div>

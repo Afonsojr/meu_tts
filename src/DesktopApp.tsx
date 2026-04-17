@@ -372,7 +372,7 @@ function App() {
     return `${inputs.length} arquivos selecionados`;
   }, [inputs, sourceMode]);
 
-  const totalProgress = job.totalChunks > 0 ? job.completedChunks / job.totalChunks : job.progress;
+  const totalProgress = job.total_chunks > 0 ? job.completed_chunks / job.total_chunks : job.progress;
   const visibleFiles = inputPreview?.files.slice(0, 4) ?? [];
   const sourceModeConfig =
     sourceModeOptions.find((item) => item.id === sourceMode) ?? sourceModeOptions[0];
