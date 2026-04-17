@@ -161,6 +161,9 @@ function App() {
   const [currentFileStart, setCurrentFileStart] = useState<number | null>(null);
   const [playingAudio, setPlayingAudio] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [lastInputDir, setLastInputDir] = useState<string>(() => localStorage.getItem("lastInputDir") || "");
+  const [lastOutputDir, setLastOutputDir] = useState<string>(() => localStorage.getItem("lastOutputDir") || "");
+  const [lastSpeakerWavDir, setLastSpeakerWavDir] = useState<string>(() => localStorage.getItem("lastSpeakerWavDir") || "");
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -352,6 +355,7 @@ function App() {
       const picked = await open({
         multiple: true,
         directory: false,
+        defaultPath: lastInputDir || undefined,
         filters: [
           {
             name: "Markdown",
@@ -367,6 +371,15 @@ function App() {
       const normalized = Array.isArray(picked) ? picked : [picked];
       setInputs(normalized);
       setSourceMode(normalized.length > 1 ? "files" : "file");
+      if (normalized.length > 0) {
+        const firstPath = normalized[0];
+        const lastSep = Math.max(firstPath.lastIndexOf("/"), firstPath.lastIndexOf("\\"));
+        if (lastSep > 0) {
+          const dirPath = firstPath.substring(0, lastSep);
+          setLastInputDir(dirPath);
+          localStorage.setItem("lastInputDir", dirPath);
+        }
+      }
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -378,6 +391,7 @@ function App() {
       const picked = await open({
         directory: true,
         multiple: false,
+        defaultPath: lastInputDir || undefined,
       });
 
       if (!picked || Array.isArray(picked)) {
@@ -386,6 +400,8 @@ function App() {
 
       setInputs([picked]);
       setSourceMode("directory");
+      setLastInputDir(picked);
+      localStorage.setItem("lastInputDir", picked);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -397,6 +413,7 @@ function App() {
       const picked = await open({
         directory: true,
         multiple: false,
+        defaultPath: lastOutputDir || undefined,
       });
 
       if (!picked || Array.isArray(picked)) {
@@ -404,6 +421,8 @@ function App() {
       }
 
       setOutputDir(picked);
+      setLastOutputDir(picked);
+      localStorage.setItem("lastOutputDir", picked);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -415,6 +434,7 @@ function App() {
       const picked = await open({
         multiple: false,
         directory: false,
+        defaultPath: lastSpeakerWavDir || undefined,
         filters: [
           {
             name: "WAV",
@@ -428,6 +448,12 @@ function App() {
       }
 
       setSpeakerWav(picked);
+      const lastSep = Math.max(picked.lastIndexOf("/"), picked.lastIndexOf("\\"));
+      if (lastSep > 0) {
+        const dirPath = picked.substring(0, lastSep);
+        setLastSpeakerWavDir(dirPath);
+        localStorage.setItem("lastSpeakerWavDir", dirPath);
+      }
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
