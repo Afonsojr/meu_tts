@@ -157,6 +157,8 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [jobStartTime, setJobStartTime] = useState<number | null>(null);
   const [etaSeconds, setEtaSeconds] = useState<number | null>(null);
+  const [fileTimes, setFileTimes] = useState<number[]>([]);
+  const [currentFileStart, setCurrentFileStart] = useState<number | null>(null);
   const [playingAudio, setPlayingAudio] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
 
@@ -193,6 +195,7 @@ function App() {
         setBusy(false);
         setJobStartTime(null);
         setEtaSeconds(null);
+        setCurrentFileStart(null);
       }
 
       if (payload.status === "running" && jobStartTime === null) {
@@ -205,6 +208,18 @@ function App() {
         const avgTimePerChunk = elapsed / payload.completed_chunks;
         const eta = Math.round(chunksRemaining * avgTimePerChunk);
         setEtaSeconds(eta);
+      }
+
+      // Track file timing
+      if (payload.status === "running" && payload.current_file_name && currentFileStart === null) {
+        setCurrentFileStart(Date.now());
+      }
+
+      if (payload.status === "running" && payload.output_paths && payload.output_paths.length > 0 && currentFileStart !== null) {
+        // File completed, record time
+        const fileTime = (Date.now() - currentFileStart) / 1000;
+        setFileTimes(prev => [...prev, fileTime]);
+        setCurrentFileStart(null);
       }
 
       if (payload.status === "error") {
@@ -467,6 +482,8 @@ function App() {
       setBusy(true);
       setError(null);
       setLogs([]);
+      setFileTimes([]);
+      setCurrentFileStart(null);
       setJob({
         ...defaultJobState,
         status: "queued",
@@ -511,6 +528,10 @@ function App() {
     const mins = Math.floor((seconds % 3600) / 60);
     return `${hours}h ${mins}m`;
   }
+
+  const avgFileTime = fileTimes.length > 0
+    ? fileTimes.reduce((a, b) => a + b, 0) / fileTimes.length
+    : null;
 
   const selectedFiles = inputs
     .map((path) => formatSelectionLabel(path))
@@ -758,6 +779,12 @@ function App() {
                       <div>
                         <dt>ETA</dt>
                         <dd>{formatEta(etaSeconds)}</dd>
+                      </div>
+                    )}
+                    {avgFileTime !== null && (
+                      <div>
+                        <dt>Média/arquivo</dt>
+                        <dd>{formatEta(Math.round(avgFileTime))}</dd>
                       </div>
                     )}
                     <div>
