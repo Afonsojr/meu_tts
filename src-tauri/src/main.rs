@@ -12,7 +12,9 @@ fn main() {
             bridge::inspect_input,
             bridge::start_conversion,
             bridge::cancel_conversion,
-            bridge::retry_file_conversion
+            bridge::retry_file_conversion,
+            bridge::list_audio_folder,
+            bridge::group_audio
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

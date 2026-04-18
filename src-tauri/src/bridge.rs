@@ -182,6 +182,23 @@ enum RunMode {
     Retry { target_index: usize },
 }
 
+#[derive(Clone, Deserialize)]
+pub struct GroupAudioRequest {
+    pub folder: String,
+    pub output_dir: String,
+    pub group_size: usize,
+}
+
+#[derive(Clone, Serialize)]
+pub struct GroupAudioProgress {
+    pub group_index: usize,
+    pub total_groups: usize,
+    pub total_files: usize,
+    pub output_file: Option<String>,
+    pub status: String,
+    pub message: String,
+}
+
 #[tauri::command]
 pub fn get_catalog() -> catalog::Catalog {
     catalog::catalog()
@@ -348,6 +365,155 @@ pub fn retry_file_conversion(
         status: "running".to_string(),
         message: "Recriação iniciada".to_string(),
     })
+}
+
+#[tauri::command]
+pub fn list_audio_folder(path: String) -> Result<Vec<String>, String> {
+    let folder = PathBuf::from(&path).expand_home();
+    if !folder.exists() {
+        return Err(format!("Pasta não encontrada: {}", folder.display()));
+    }
+    if !folder.is_dir() {
+        return Err("O caminho selecionado não é uma pasta.".to_string());
+    }
+    let files = list_audio_files(&folder)?;
+    Ok(files
+        .iter()
+        .map(|p| {
+            p.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| p.to_string_lossy().to_string())
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub async fn group_audio(
+    request: GroupAudioRequest,
+    app: AppHandle,
+) -> Result<Vec<String>, String> {
+    let folder = PathBuf::from(&request.folder).expand_home();
+    if !folder.exists() {
+        return Err(format!("Pasta não encontrada: {}", folder.display()));
+    }
+
+    let files = list_audio_files(&folder)?;
+    if files.is_empty() {
+        return Err("Nenhum arquivo de áudio (.mp3, .ogg, .wav) encontrado na pasta.".to_string());
+    }
+
+    let output_dir = PathBuf::from(&request.output_dir).expand_home();
+    if !output_dir.exists() {
+        fs::create_dir_all(&output_dir).map_err(|e| e.to_string())?;
+    }
+
+    let group_size = request.group_size.max(1);
+    let groups: Vec<Vec<PathBuf>> = files.chunks(group_size).map(|c| c.to_vec()).collect();
+    let total_groups = groups.len();
+    let total_files = files.len();
+
+    let folder_stem = folder
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "grupo".to_string());
+
+    let _ = app.emit(
+        "group-audio-event",
+        GroupAudioProgress {
+            group_index: 0,
+            total_groups,
+            total_files,
+            output_file: None,
+            status: "started".to_string(),
+            message: format!("{total_files} arquivos → {total_groups} grupos de {group_size}"),
+        },
+    );
+
+    let mut output_paths = Vec::new();
+
+    for (i, group) in groups.iter().enumerate() {
+        let group_num = i + 1;
+        let output_file = output_dir.join(format!("{folder_stem}_{group_num:03}.mp3"));
+
+        let _ = app.emit(
+            "group-audio-event",
+            GroupAudioProgress {
+                group_index: group_num,
+                total_groups,
+                total_files,
+                output_file: None,
+                status: "merging".to_string(),
+                message: format!("Mesclando grupo {group_num}/{total_groups}..."),
+            },
+        );
+
+        let list_path = output_dir.join(format!(".__concat_{group_num:03}.txt"));
+        let list_content = group
+            .iter()
+            .map(|p| format!("file '{}'\n", p.to_string_lossy().replace('\'', "\\'")))
+            .collect::<String>();
+        fs::write(&list_path, &list_content).map_err(|e| e.to_string())?;
+
+        let result = Command::new("ffmpeg")
+            .arg("-y")
+            .arg("-f")
+            .arg("concat")
+            .arg("-safe")
+            .arg("0")
+            .arg("-i")
+            .arg(&list_path)
+            .arg("-c")
+            .arg("copy")
+            .arg(&output_file)
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .output()
+            .await;
+
+        let _ = fs::remove_file(&list_path);
+
+        match result {
+            Err(e) => {
+                return Err(format!(
+                    "Falha ao executar ffmpeg: {e}. Verifique se o ffmpeg está instalado."
+                ));
+            }
+            Ok(out) if !out.status.success() => {
+                let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+                return Err(format!("ffmpeg falhou no grupo {group_num}: {stderr}"));
+            }
+            Ok(_) => {}
+        }
+
+        let output_str = output_file.to_string_lossy().to_string();
+        output_paths.push(output_str.clone());
+
+        let _ = app.emit(
+            "group-audio-event",
+            GroupAudioProgress {
+                group_index: group_num,
+                total_groups,
+                total_files,
+                output_file: Some(output_str),
+                status: "group_done".to_string(),
+                message: format!("Grupo {group_num} concluído ({} arquivos)", group.len()),
+            },
+        );
+    }
+
+    let _ = app.emit(
+        "group-audio-event",
+        GroupAudioProgress {
+            group_index: total_groups,
+            total_groups,
+            total_files,
+            output_file: None,
+            status: "done".to_string(),
+            message: format!("{total_groups} grupos criados com sucesso"),
+        },
+    );
+
+    Ok(output_paths)
 }
 
 async fn run_worker(
@@ -899,6 +1065,27 @@ fn list_markdown_files(path: &Path) -> Result<Vec<PathBuf>, String> {
             Some("md") | Some("markdown")
         ) {
             files.push(entry_path);
+        }
+    }
+
+    files.sort();
+    Ok(files)
+}
+
+fn list_audio_files(path: &Path) -> Result<Vec<PathBuf>, String> {
+    let entries = fs::read_dir(path).map_err(|e| e.to_string())?;
+    let mut files = Vec::new();
+
+    for entry in entries {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let p = entry.path();
+        if p.is_file()
+            && matches!(
+                p.extension().and_then(|ext| ext.to_str()),
+                Some("mp3") | Some("ogg") | Some("wav")
+            )
+        {
+            files.push(p);
         }
     }
 

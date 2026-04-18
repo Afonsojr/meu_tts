@@ -1,34 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  AlertCircle,
-  CheckCircle2,
-  ChevronDown,
-  Files,
-  FileText,
-  FolderOpen,
-  Gauge,
-  LoaderCircle,
-  Play,
-  RefreshCcw,
-  Search,
-  Settings2,
-  Sparkles,
-  Volume2,
-} from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import { cn } from "@/lib/utils";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Progress } from "@/components/ui/progress";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Slider } from "@/components/ui/slider";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 type VoiceEntry = {
   id: string;
@@ -106,12 +79,6 @@ type ConversionRequest = {
   max_workers: number | null;
 };
 
-type StartResponse = {
-  job_id: string;
-  status: string;
-  message: string;
-};
-
 type JobState = {
   job_id: string;
   status: string;
@@ -130,44 +97,25 @@ type JobState = {
 };
 
 type SourceMode = "file" | "files" | "directory";
+type OutputFormat = "mp3" | "wav" | "ogg";
+type NavView = "converter" | "agrupar";
+
+type GroupProgressEvent = {
+  group_index: number;
+  total_groups: number;
+  total_files: number;
+  output_file: string | null;
+  status: string;
+  message: string;
+};
 
 const defaultModelId = "edge";
 const modelOrder = ["edge", "kokoro", "piper", "edge-xtts", "xtts"];
 
-const sourceModeOptions: Array<{
-  id: SourceMode;
-  label: string;
-  description: string;
-  actionLabel: string;
-  icon: typeof FileText;
-}> = [
-  {
-    id: "file",
-    label: "Arquivo",
-    description: "Texto isolado para MP3",
-    actionLabel: "Selecionar arquivo",
-    icon: FileText,
-  },
-  {
-    id: "files",
-    label: "Multiplos",
-    description: "Capitulos em sequencia",
-    actionLabel: "Selecionar arquivos",
-    icon: Files,
-  },
-  {
-    id: "directory",
-    label: "Pasta",
-    description: "Escanear diretorio inteiro",
-    actionLabel: "Selecionar pasta",
-    icon: FolderOpen,
-  },
-];
-
 const defaultJobState: JobState = {
   job_id: "",
   status: "idle",
-  message: "Escolha a entrada e configure a saida para comecar.",
+  message: "Escolha a entrada e configure a saída para começar.",
   progress: 0,
   current_file_index: 0,
   total_files: 0,
@@ -181,50 +129,506 @@ const defaultJobState: JobState = {
   files: [],
 };
 
-function formatPercent(value: number) {
-  return `${Math.round(value * 100)}%`;
-}
-
 function formatSelectionLabel(path: string) {
   const parts = path.split(/[/\\]/);
   return parts[parts.length - 1] || path;
 }
 
-function formatSeconds(value: number | null) {
-  if (value === null) {
-    return "—";
-  }
-
-  if (value < 60) {
-    return `${value}s`;
-  }
-
-  const minutes = Math.floor(value / 60);
-  const seconds = value % 60;
-  return `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
+function formatSeconds(secs: number): string {
+  if (secs < 60) return `${secs}s`;
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-function statusBadgeClass(status: string) {
-  if (status === "error") {
-    return "border-destructive/30 bg-destructive/15 text-destructive-foreground";
+function voiceInitials(label: string): string {
+  return label
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((w) => w[0] ?? "")
+    .join("")
+    .toUpperCase()
+    .slice(0, 2);
+}
+
+function WaveStrip({ n = 80, seed = 1 }: { n?: number; seed?: number }) {
+  const bars = useMemo(() => {
+    let s = seed * 9301;
+    const rnd = () => {
+      s = (s * 9301 + 49297) % 233280;
+      return s / 233280;
+    };
+    return Array.from({ length: n }, (_, i) => ({
+      h: 6 + Math.abs(Math.sin(i * 0.35 + seed) * 20) + rnd() * 10,
+    }));
+  }, [n, seed]);
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: "2px", height: "32px", overflow: "hidden", flex: 1 }}>
+      {bars.map((b, i) => (
+        <i
+          key={i}
+          style={{
+            display: "block",
+            width: "2px",
+            height: `${b.h}px`,
+            background: "linear-gradient(180deg, var(--daw-teal), var(--daw-teal-dim))",
+            borderRadius: "1px",
+            opacity: 0.55,
+            flexShrink: 0,
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function AgruparView() {
+  const [sourceFolder, setSourceFolder] = useState<string>(
+    () => localStorage.getItem("agrupar_src") || "",
+  );
+  const [outputDir, setOutputDir] = useState<string>(
+    () => localStorage.getItem("agrupar_out") || "",
+  );
+  const [groupSize, setGroupSize] = useState<3 | 5 | 10>(5);
+  const [audioFiles, setAudioFiles] = useState<string[]>([]);
+  const [loadingFiles, setLoadingFiles] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [lastEvent, setLastEvent] = useState<GroupProgressEvent | null>(null);
+  const [completedFiles, setCompletedFiles] = useState<string[]>([]);
+  const [done, setDone] = useState(false);
+
+  useEffect(() => {
+    if (!sourceFolder) {
+      setAudioFiles([]);
+      return;
+    }
+    setLoadingFiles(true);
+    invoke<string[]>("list_audio_folder", { path: sourceFolder })
+      .then((files) => {
+        setAudioFiles(files);
+        setLoadingFiles(false);
+      })
+      .catch((e) => {
+        setError(String(e));
+        setAudioFiles([]);
+        setLoadingFiles(false);
+      });
+  }, [sourceFolder]);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    listen<GroupProgressEvent>("group-audio-event", (event) => {
+      const p = event.payload;
+      setLastEvent(p);
+      if (p.status === "group_done" && p.output_file) {
+        setCompletedFiles((prev) => [...prev, p.output_file!]);
+      }
+      if (p.status === "done") {
+        setBusy(false);
+        setDone(true);
+      }
+    }).then((cleanup) => {
+      unlisten = cleanup;
+    });
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, []);
+
+  const groups = useMemo(() => {
+    const result: string[][] = [];
+    for (let i = 0; i < audioFiles.length; i += groupSize) {
+      result.push(audioFiles.slice(i, i + groupSize));
+    }
+    return result;
+  }, [audioFiles, groupSize]);
+
+  async function chooseSourceFolder() {
+    try {
+      const picked = await open({ directory: true, multiple: false });
+      if (!picked || Array.isArray(picked)) return;
+      setSourceFolder(picked);
+      localStorage.setItem("agrupar_src", picked);
+      setError(null);
+    } catch (e) {
+      setError(String(e));
+    }
   }
 
-  if (status === "completed") {
-    return "border-[rgb(110_142_106_/0.28)] bg-[rgb(95_133_84_/0.12)] text-[rgb(202_224_190)]";
+  async function chooseOutputDir() {
+    try {
+      const picked = await open({ directory: true, multiple: false });
+      if (!picked || Array.isArray(picked)) return;
+      setOutputDir(picked);
+      localStorage.setItem("agrupar_out", picked);
+      setError(null);
+    } catch (e) {
+      setError(String(e));
+    }
   }
 
-  if (status === "completed_with_errors") {
-    return "border-[rgb(166_121_83_/0.34)] bg-[rgb(166_121_83_/0.12)] text-[rgb(246_223_196)]";
+  function reset() {
+    setLastEvent(null);
+    setCompletedFiles([]);
+    setDone(false);
+    setError(null);
   }
 
-  if (status === "running") {
-    return "border-[rgb(207_171_128_/0.28)] bg-[rgb(179_137_96_/0.12)] text-[rgb(240_221_200)]";
+  async function startGrouping() {
+    if (!sourceFolder || !outputDir || busy) return;
+    setBusy(true);
+    reset();
+    try {
+      await invoke("group_audio", {
+        request: { folder: sourceFolder, output_dir: outputDir, group_size: groupSize },
+      });
+    } catch (e) {
+      setError(String(e));
+      setBusy(false);
+    }
   }
 
-  return "border-border bg-background/70 text-muted-foreground";
+  const canStart = !busy && !!sourceFolder && !!outputDir && audioFiles.length > 0;
+  const groupProgress =
+    lastEvent && lastEvent.total_groups > 0
+      ? lastEvent.group_index / lastEvent.total_groups
+      : 0;
+
+  const statusText = busy
+    ? (lastEvent?.message ?? "Processando...")
+    : done
+      ? `${completedFiles.length} grupos criados com sucesso`
+      : canStart
+        ? `${audioFiles.length} arquivos → ${groups.length} grupos de ${groupSize}`
+        : sourceFolder
+          ? loadingFiles
+            ? "Lendo pasta..."
+            : audioFiles.length === 0
+              ? "Nenhum arquivo de áudio encontrado"
+              : "Pronto"
+          : "Selecione uma pasta de origem";
+
+  return (
+    <div style={{ display: "grid", gap: "var(--daw-gap)", padding: "0 0 40px" }}>
+      {/* Config panel */}
+      <section className="daw-panel">
+        <header className="daw-panel-head">
+          <span className="daw-panel-tag">Agrupar</span>
+          <h3>Mesclar arquivos de áudio</h3>
+          <span className="daw-panel-sub" />
+          <span className="daw-chip muted" style={{ cursor: "default" }}>
+            {audioFiles.length > 0 ? `${audioFiles.length} arquivos` : "sem arquivos"}
+          </span>
+        </header>
+        <div className="daw-panel-body">
+          <div className="daw-rack">
+            {/* Left col: folders */}
+            <div className="daw-col">
+              <div>
+                <span className="daw-row-label">Pasta de origem</span>
+                <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                  <div
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      height: "var(--daw-row-h)",
+                      background: "var(--daw-bg-0)",
+                      border: "1px solid var(--daw-line)",
+                      borderRadius: "8px",
+                      padding: "0 12px",
+                      display: "flex",
+                      alignItems: "center",
+                      fontFamily: "var(--daw-font-mono)",
+                      fontSize: "11px",
+                      color: sourceFolder ? "var(--daw-ink-1)" : "var(--daw-ink-3)",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {sourceFolder || "Nenhuma pasta selecionada"}
+                  </div>
+                  <button className="daw-mini-btn" onClick={chooseSourceFolder}>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                    </svg>
+                    Escolher
+                  </button>
+                </div>
+                <div style={{ marginTop: "6px", fontFamily: "var(--daw-font-mono)", fontSize: "10.5px", color: "var(--daw-ink-3)" }}>
+                  {loadingFiles ? "lendo..." : audioFiles.length > 0 ? `${audioFiles.length} arquivo${audioFiles.length !== 1 ? "s" : ""} de áudio (.mp3 / .ogg / .wav)` : sourceFolder ? "nenhum arquivo de áudio encontrado" : ""}
+                </div>
+              </div>
+
+              <div className="daw-hr" />
+
+              <div>
+                <span className="daw-row-label">Pasta de saída</span>
+                <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                  <div
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      height: "var(--daw-row-h)",
+                      background: "var(--daw-bg-0)",
+                      border: "1px solid var(--daw-line)",
+                      borderRadius: "8px",
+                      padding: "0 12px",
+                      display: "flex",
+                      alignItems: "center",
+                      fontFamily: "var(--daw-font-mono)",
+                      fontSize: "11px",
+                      color: outputDir ? "var(--daw-ink-1)" : "var(--daw-ink-3)",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {outputDir || "Nenhuma pasta selecionada"}
+                  </div>
+                  <button className="daw-mini-btn" onClick={chooseOutputDir}>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                    </svg>
+                    Escolher
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Right col: group size */}
+            <div className="daw-col">
+              <div>
+                <span className="daw-row-label">Tamanho do grupo</span>
+                <p className="daw-row-help" style={{ marginBottom: "12px" }}>
+                  Quantos arquivos serão mesclados em cada grupo. Os arquivos são ordenados por nome antes de agrupar.
+                </p>
+                <div className="daw-seg" style={{ width: "fit-content" }}>
+                  {([3, 5, 10] as const).map((n) => (
+                    <button
+                      key={n}
+                      className={groupSize === n ? "on" : ""}
+                      onClick={() => setGroupSize(n)}
+                    >
+                      {n} arquivos
+                    </button>
+                  ))}
+                </div>
+                {audioFiles.length > 0 && (
+                  <div style={{ marginTop: "16px", display: "grid", gap: "8px" }}>
+                    <div style={{ fontFamily: "var(--daw-font-mono)", fontSize: "11px", color: "var(--daw-ink-2)" }}>
+                      {audioFiles.length} arquivos →{" "}
+                      <span style={{ color: "var(--daw-amber)" }}>{groups.length} grupo{groups.length !== 1 ? "s" : ""}</span>
+                    </div>
+                    <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                      {groups.map((g, i) => (
+                        <span key={i} className="daw-chip muted" style={{ cursor: "default" }}>
+                          G{i + 1}: {g.length} arq
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Preview panel */}
+      {audioFiles.length > 0 && (
+        <section className="daw-panel">
+          <header className="daw-panel-head">
+            <span className="daw-panel-tag">Prévia</span>
+            <h3>Divisão dos grupos</h3>
+            <span className="daw-panel-sub" />
+            <span className="daw-chip teal" style={{ cursor: "default" }}>
+              {groups.length} grupos · {groupSize} por grupo
+            </span>
+          </header>
+          <div className="daw-panel-body">
+            <div style={{ maxHeight: "260px", overflowY: "auto", display: "grid", gap: "8px" }}>
+              {groups.map((group, gi) => (
+                <div
+                  key={gi}
+                  style={{
+                    background: "var(--daw-bg-0)",
+                    border: "1px solid var(--daw-line-soft)",
+                    borderRadius: "8px",
+                    padding: "10px 14px",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}>
+                    <span style={{ fontFamily: "var(--daw-font-mono)", fontSize: "11px", color: "var(--daw-amber)", fontWeight: 600 }}>
+                      Grupo {gi + 1}
+                    </span>
+                    <span style={{ fontFamily: "var(--daw-font-mono)", fontSize: "10.5px", color: "var(--daw-ink-3)" }}>
+                      · {group.length} arquivo{group.length !== 1 ? "s" : ""}
+                    </span>
+                    {completedFiles.length > gi && (
+                      <span style={{ marginLeft: "auto", fontFamily: "var(--daw-font-mono)", fontSize: "10.5px", color: "var(--daw-teal)" }}>
+                        ✓ {formatSelectionLabel(completedFiles[gi])}
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                    {group.map((fname, fi) => (
+                      <span
+                        key={fi}
+                        style={{
+                          fontFamily: "var(--daw-font-mono)",
+                          fontSize: "10.5px",
+                          color: "var(--daw-ink-2)",
+                          background: "var(--daw-bg-2)",
+                          padding: "2px 7px",
+                          borderRadius: "4px",
+                          border: "1px solid var(--daw-line)",
+                        }}
+                      >
+                        {fname}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* Error */}
+      {error && (
+        <div className="daw-error">
+          ⚠ {error}
+          <button
+            onClick={() => setError(null)}
+            style={{
+              float: "right",
+              background: "transparent",
+              border: "none",
+              color: "var(--daw-red)",
+              cursor: "pointer",
+              fontSize: "12px",
+              padding: 0,
+              fontFamily: "var(--daw-font-mono)",
+            }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* Transport bar */}
+      <div className="daw-transport">
+        <div className="daw-status-pill">
+          <span className={`daw-status-dot ${busy ? "running" : done ? "completed" : ""}`} />
+          {statusText}
+        </div>
+        <WaveStrip n={120} seed={42} />
+        <div className="daw-transport-actions">
+          <button className="daw-btn" onClick={reset} disabled={busy}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3 12a9 9 0 1 0 9-9" /><path d="M3 3v6h6" />
+            </svg>
+            Redefinir
+          </button>
+          <button className="daw-btn primary" onClick={startGrouping} disabled={!canStart}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2V9M9 21H5a2 2 0 0 1-2-2V9m0 0h18" />
+            </svg>
+            {busy ? "Mesclando..." : "Agrupar"}
+          </button>
+        </div>
+      </div>
+
+      {/* Progress panel */}
+      {(busy || done) && lastEvent && (
+        <section className="daw-panel">
+          <header className="daw-panel-head">
+            <span className="daw-panel-tag">Execução</span>
+            <h3>Mesclagem de grupos</h3>
+            <span className="daw-panel-sub" />
+            {done ? (
+              <span className="daw-chip teal" style={{ cursor: "default" }}>
+                ✓ {completedFiles.length} grupos criados
+              </span>
+            ) : (
+              <span className="daw-chip amber" style={{ cursor: "default" }}>
+                ● {lastEvent.group_index}/{lastEvent.total_groups}
+              </span>
+            )}
+          </header>
+          <div className="daw-panel-body" style={{ display: "grid", gap: "14px" }}>
+            <div>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
+                <span className="daw-section-label">Progresso geral</span>
+                <span style={{ fontFamily: "var(--daw-font-mono)", fontSize: "11px", color: "var(--daw-ink-2)" }}>
+                  {lastEvent.group_index}/{lastEvent.total_groups} grupos
+                </span>
+              </div>
+              <div className="daw-bar">
+                <span
+                  className={`daw-bar-fill ${busy ? "active" : ""}`}
+                  style={{ width: `${Math.round(groupProgress * 100)}%` }}
+                />
+              </div>
+              <div style={{ marginTop: "8px", fontFamily: "var(--daw-font-mono)", fontSize: "11px", color: "var(--daw-ink-2)" }}>
+                {lastEvent.message}
+              </div>
+            </div>
+
+            {completedFiles.length > 0 && (
+              <div>
+                <span className="daw-section-label" style={{ marginBottom: "8px", display: "block" }}>
+                  Arquivos criados
+                </span>
+                <div style={{ display: "grid", gap: "4px" }}>
+                  {completedFiles.map((f, i) => (
+                    <div
+                      key={i}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "8px",
+                        padding: "6px 10px",
+                        background: "var(--daw-bg-0)",
+                        borderRadius: "6px",
+                        border: "1px solid var(--daw-line-soft)",
+                      }}
+                    >
+                      <span style={{ color: "var(--daw-teal)", fontSize: "12px" }}>✓</span>
+                      <span
+                        style={{
+                          fontFamily: "var(--daw-font-mono)",
+                          fontSize: "11px",
+                          color: "var(--daw-ink-1)",
+                          flex: 1,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {formatSelectionLabel(f)}
+                      </span>
+                      <span style={{ fontFamily: "var(--daw-font-mono)", fontSize: "10px", color: "var(--daw-ink-3)" }}>
+                        grupo {i + 1}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+    </div>
+  );
 }
 
 function App() {
+  const [navView, setNavView] = useState<NavView>("converter");
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [job, setJob] = useState<JobState>(defaultJobState);
   const [logs, setLogs] = useState<string[]>([]);
@@ -235,31 +639,45 @@ function App() {
   const [model, setModel] = useState(defaultModelId);
   const [voiceFilter, setVoiceFilter] = useState("");
   const [selectedVoice, setSelectedVoice] = useState<string | null>(null);
-  const [speed, setSpeed] = useState(1);
+  const [speed, setSpeed] = useState(0);
   const [startAt, setStartAt] = useState(1);
-  const [maxWorkers, setMaxWorkers] = useState(2);
+  const [maxWorkers, setMaxWorkers] = useState(10);
+  const [outputFormat, setOutputFormat] = useState<OutputFormat>("mp3");
   const [inputPreview, setInputPreview] = useState<InputPreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [lastInputDir, setLastInputDir] = useState<string>(() => localStorage.getItem("lastInputDir") || "");
-  const [lastOutputDir, setLastOutputDir] = useState<string>(() => localStorage.getItem("lastOutputDir") || "");
   const [finalJobTime, setFinalJobTime] = useState<number | null>(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [density, setDensity] = useState<"comfortable" | "compact">(
+    () => (localStorage.getItem("dawDensity") as "comfortable" | "compact") ?? "comfortable",
+  );
+  const [tweakOpen, setTweakOpen] = useState(false);
+  const [bridgeOnline, setBridgeOnline] = useState(false);
+  const [lastInputDir, setLastInputDir] = useState<string>(
+    () => localStorage.getItem("lastInputDir") || "",
+  );
+  const [lastOutputDir, setLastOutputDir] = useState<string>(
+    () => localStorage.getItem("lastOutputDir") || "",
+  );
   const jobStartTimeRef = useRef<number | null>(null);
+  const logEndRef = useRef<HTMLDivElement>(null);
 
+  // Load catalog
   useEffect(() => {
     let unlisten: (() => void) | undefined;
 
     invoke<Catalog>("get_catalog")
       .then((data) => {
         setCatalog(data);
+        setBridgeOnline(true);
         const fallbackModelId = data.defaultModel || defaultModelId;
         setModel(fallbackModelId);
-        const defaultModel = data.models.find((item) => item.id === fallbackModelId);
+        const defaultModel = data.models.find((m) => m.id === fallbackModelId);
         setSelectedVoice(defaultModel?.defaultVoice ?? defaultModel?.voices[0]?.id ?? null);
       })
       .catch((err) => {
+        setBridgeOnline(false);
         setError(err instanceof Error ? err.message : String(err));
       });
 
@@ -272,10 +690,7 @@ function App() {
       }
 
       const { kind: _kind, ...statusPayload } = payload;
-      setJob((current) => ({
-        ...current,
-        ...statusPayload,
-      }));
+      setJob((current) => ({ ...current, ...statusPayload }));
 
       if (payload.status === "completed") {
         setBusy(false);
@@ -300,198 +715,177 @@ function App() {
     });
 
     return () => {
-      if (unlisten) {
-        unlisten();
-      }
+      if (unlisten) unlisten();
     };
   }, []);
 
+  // Elapsed timer
   useEffect(() => {
-    const currentModel = catalog?.models.find((item) => item.id === model);
-    if (!currentModel) {
+    if (job.status !== "running") {
+      setElapsedSeconds(0);
       return;
     }
+    const interval = setInterval(() => {
+      const startTime = jobStartTimeRef.current;
+      if (startTime) setElapsedSeconds(Math.round((Date.now() - startTime) / 1000));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [job.status]);
 
-    if (currentModel.id === "xtts") {
-      setSelectedVoice(null);
-      return;
-    }
+  // Auto-scroll log
+  useEffect(() => {
+    logEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [logs]);
 
-    const voiceStillValid = currentModel.voices.some((item) => item.id === selectedVoice);
+  // Voice validation
+  useEffect(() => {
+    const currentModel = catalog?.models.find((m) => m.id === model);
+    if (!currentModel) return;
+    if (currentModel.id === "xtts") { setSelectedVoice(null); return; }
+    const voiceStillValid = currentModel.voices.some((v) => v.id === selectedVoice);
     if (!voiceStillValid) {
       setSelectedVoice(currentModel.defaultVoice ?? currentModel.voices[0]?.id ?? null);
     }
   }, [catalog, model, selectedVoice]);
 
+  // Input preview
   useEffect(() => {
     let cancelled = false;
 
     async function loadPreview() {
-      if (!inputs.length) {
-        setInputPreview(null);
-        return;
-      }
+      if (!inputs.length) { setInputPreview(null); return; }
 
       if (sourceMode === "files" && inputs.length > 1) {
         setInputPreview({
           path: inputs[0],
           kind: "directory",
           file_count: inputs.length,
-          files: inputs.map((path) => formatSelectionLabel(path)),
+          files: inputs.map((p) => formatSelectionLabel(p)),
         });
         return;
       }
 
       setPreviewLoading(true);
       try {
-        const preview = await invoke<InputPreview>("inspect_input", {
-          path: inputs[0],
-        });
-        if (!cancelled) {
-          setInputPreview(preview);
-        }
+        const preview = await invoke<InputPreview>("inspect_input", { path: inputs[0] });
+        if (!cancelled) setInputPreview(preview);
       } catch (err) {
-        if (!cancelled) {
-          setInputPreview(null);
-          setError(err instanceof Error ? err.message : String(err));
-        }
+        if (!cancelled) { setInputPreview(null); setError(err instanceof Error ? err.message : String(err)); }
       } finally {
-        if (!cancelled) {
-          setPreviewLoading(false);
-        }
+        if (!cancelled) setPreviewLoading(false);
       }
     }
 
     void loadPreview();
-
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [inputs, sourceMode]);
 
-  const currentModel = catalog?.models.find((item) => item.id === model) ?? null;
+  const currentModel = catalog?.models.find((m) => m.id === model) ?? null;
 
   const modelOptions = useMemo(() => {
-    if (!catalog) {
-      return [];
-    }
-
-    return catalog.models
-      .slice()
-      .sort((left, right) => modelOrder.indexOf(left.id) - modelOrder.indexOf(right.id));
+    if (!catalog) return [];
+    return catalog.models.slice().sort((a, b) => modelOrder.indexOf(a.id) - modelOrder.indexOf(b.id));
   }, [catalog]);
 
   const availableVoices = useMemo(() => {
-    if (!currentModel) {
-      return [];
-    }
-
+    if (!currentModel) return [];
     const query = voiceFilter.trim().toLowerCase();
-    return currentModel.voices.filter((voice) => {
-      if (!query) {
-        return true;
-      }
-
-      return voice.id.toLowerCase().includes(query) || voice.label.toLowerCase().includes(query);
-    });
+    return currentModel.voices.filter((v) =>
+      !query || v.id.toLowerCase().includes(query) || v.label.toLowerCase().includes(query),
+    );
   }, [currentModel, voiceFilter]);
 
-  const selectedPreview = useMemo(() => {
-    if (!inputs.length) {
-      return "Nenhuma entrada selecionada";
-    }
+  const totalProgress =
+    job.total_chunks > 0 ? job.completed_chunks / job.total_chunks : job.progress;
 
-    if (sourceMode === "directory") {
-      return `${formatSelectionLabel(inputs[0])} · pasta`;
-    }
-
-    if (sourceMode === "file") {
-      return `${formatSelectionLabel(inputs[0])} · arquivo`;
-    }
-
-    return `${inputs.length} arquivos selecionados`;
-  }, [inputs, sourceMode]);
-
-  const totalProgress = job.total_chunks > 0 ? job.completed_chunks / job.total_chunks : job.progress;
-  const sourceModeConfig =
-    sourceModeOptions.find((item) => item.id === sourceMode) ?? sourceModeOptions[0];
   const currentModelAllowsSpeed = currentModel?.supportsSpeed ?? false;
-  const currentModelAllowsSpeakerWav = currentModel?.supportsSpeakerWav ?? false;
-  const showSpeakerPicker = currentModelAllowsSpeakerWav;
+  const showSpeakerPicker = currentModel?.supportsSpeakerWav ?? false;
   const activeVoiceLabel = showSpeakerPicker
     ? speakerWav
       ? formatSelectionLabel(speakerWav)
-      : "WAV de referencia"
-    : selectedVoice ?? "voz automatica";
-  const outputLabel = outputDir ? formatSelectionLabel(outputDir) : "sem saida";
-  const selectedFiles = inputs.map((path) => formatSelectionLabel(path)).slice(0, 5);
-  const recentLogs = logs.slice(-4).reverse();
-  const jobFiles = job.files;
-  const convertedFiles = jobFiles.filter((file) => file.status === "completed").length;
-  const failedFiles = jobFiles.filter((file) => file.status === "error").length;
-  const pendingFiles = jobFiles.filter((file) =>
-    ["queued", "running", "retrying", "merging"].includes(file.status),
-  ).length;
+      : "WAV de referência"
+    : selectedVoice ?? "voz automática";
+  const outputLabel = outputDir ? formatSelectionLabel(outputDir) : "—";
+
   const canStart =
     !busy &&
     inputs.length > 0 &&
     outputDir.length > 0 &&
     (!showSpeakerPicker || speakerWav.length > 0);
+
   const validationHints = [
-    inputs.length > 0 ? null : "Escolha um arquivo ou uma pasta.",
-    outputDir ? null : "Defina a pasta de saida.",
-    showSpeakerPicker && !speakerWav ? "XTTS exige um WAV de referencia." : null,
+    inputs.length > 0 ? null : "Escolha um arquivo ou pasta.",
+    outputDir ? null : "Defina a pasta de saída.",
+    showSpeakerPicker && !speakerWav ? "XTTS exige um WAV de referência." : null,
   ].filter(Boolean) as string[];
-  const statusLabel =
-    job.status === "completed"
-      ? "Pronto"
-      : job.status === "running"
-        ? "Em gravacao"
-        : job.status === "completed_with_errors"
-          ? "Concluido com falhas"
-        : job.status === "error"
-          ? "Erro"
-          : job.status === "queued"
-            ? "Na fila"
-            : "Em espera";
-  const timerLabel =
-    job.status === "completed"
-      ? formatSeconds(finalJobTime)
-      : job.status === "running"
-        ? "capturando"
-        : "—";
-  const setupSummary = previewLoading
-    ? "Lendo a origem selecionada..."
+
+  // Derived session info
+  const sessionTitle = inputs.length
+    ? formatSelectionLabel(inputs[0])
+    : "Nova sessão";
+
+  const sessionSubtitle = previewLoading
+    ? "lendo..."
     : inputPreview
       ? inputPreview.kind === "directory"
-        ? `${inputPreview.file_count} capitulos prontos para lote`
-        : "Arquivo unico pronto para conversao"
-      : "Selecione a origem do texto e a pasta de saida";
-  const readinessCopy = validationHints.length
-    ? `${validationHints.length} ajuste${validationHints.length > 1 ? "s" : ""} pendente${validationHints.length > 1 ? "s" : ""}`
-    : "Sessao pronta para iniciar";
-  const fileProgressLabel = job.current_file_name
-    ? `${job.current_file_index}/${job.total_files} · ${job.current_file_name}`
-    : "Nenhum arquivo em processamento";
-  const chunkProgressLabel = job.total_chunks
-    ? `${job.completed_chunks}/${job.total_chunks} chunks fechados`
-    : "Chunks ainda nao iniciados";
-  const voicePanelKicker = showSpeakerPicker ? "Clonagem por referencia" : "Catalogo de vozes";
-  const modelDescriptor = currentModel?.description ?? "Modelo pronto para uso de estudio.";
+        ? `${inputPreview.file_count} arquivos`
+        : "arquivo único pronto"
+      : "sem entrada";
+
+  // Queue items
+  const queueItems = useMemo(() => {
+    if (job.files.length > 0) {
+      return job.files.map((f) => ({
+        state:
+          f.status === "completed"
+            ? "done"
+            : f.status === "running" || f.status === "retrying"
+              ? "active"
+              : f.status === "error"
+                ? "err"
+                : "queued",
+        name: f.name,
+        chunks:
+          f.total_chunks > 0
+            ? `${f.completed_chunks}/${f.total_chunks}`
+            : "—",
+        path: f.path,
+        canRetry: f.status === "error" && !busy,
+      }));
+    }
+    if (inputPreview && sourceMode !== "file") {
+      return inputPreview.files.map((name) => ({
+        state: "queued",
+        name,
+        chunks: "—",
+        path: name,
+        canRetry: false,
+      }));
+    }
+    return [];
+  }, [job.files, inputPreview, sourceMode, busy]);
+
+  const completedCount = job.files.filter((f) => f.status === "completed").length;
+  const activeCount = job.files.filter(
+    (f) => f.status === "running" || f.status === "retrying",
+  ).length;
+  const queuedCount = job.files.filter((f) => f.status === "queued").length;
+
+  // Timing display
+  const elapsedDisplay =
+    job.status === "completed" && finalJobTime !== null
+      ? formatSeconds(finalJobTime)
+      : job.status === "running"
+        ? formatSeconds(elapsedSeconds)
+        : "—";
 
   async function retryFile(filePath: string) {
-    if (!job.job_id || busy) {
-      return;
-    }
-
+    if (!job.job_id || busy) return;
     try {
       setBusy(true);
       setError(null);
-      await invoke<StartResponse>("retry_file_conversion", {
-        request: {
-          job_id: job.job_id,
-          file_path: filePath,
-        },
+      await invoke("retry_file_conversion", {
+        request: { job_id: job.job_id, file_path: filePath },
       });
     } catch (err) {
       setBusy(false);
@@ -505,18 +899,9 @@ function App() {
         multiple: true,
         directory: false,
         defaultPath: lastInputDir || undefined,
-        filters: [
-          {
-            name: "Markdown",
-            extensions: ["md", "markdown"],
-          },
-        ],
+        filters: [{ name: "Markdown", extensions: ["md", "markdown"] }],
       });
-
-      if (!picked) {
-        return;
-      }
-
+      if (!picked) return;
       const normalized = Array.isArray(picked) ? picked : [picked];
       setInputs(normalized);
       setSourceMode(normalized.length > 1 ? "files" : "file");
@@ -542,11 +927,7 @@ function App() {
         multiple: false,
         defaultPath: lastInputDir || undefined,
       });
-
-      if (!picked || Array.isArray(picked)) {
-        return;
-      }
-
+      if (!picked || Array.isArray(picked)) return;
       setInputs([picked]);
       setSourceMode("directory");
       setLastInputDir(picked);
@@ -564,11 +945,7 @@ function App() {
         multiple: false,
         defaultPath: lastOutputDir || undefined,
       });
-
-      if (!picked || Array.isArray(picked)) {
-        return;
-      }
-
+      if (!picked || Array.isArray(picked)) return;
       setOutputDir(picked);
       setLastOutputDir(picked);
       localStorage.setItem("lastOutputDir", picked);
@@ -583,18 +960,9 @@ function App() {
       const picked = await open({
         multiple: false,
         directory: false,
-        filters: [
-          {
-            name: "WAV",
-            extensions: ["wav"],
-          },
-        ],
+        filters: [{ name: "WAV", extensions: ["wav"] }],
       });
-
-      if (!picked || Array.isArray(picked)) {
-        return;
-      }
-
+      if (!picked || Array.isArray(picked)) return;
       setSpeakerWav(picked);
       setError(null);
     } catch (err) {
@@ -609,12 +977,12 @@ function App() {
     setSpeakerWav("");
     const fallbackModelId = catalog?.defaultModel ?? defaultModelId;
     setModel(fallbackModelId);
-    const fallbackModel = catalog?.models.find((item) => item.id === fallbackModelId);
+    const fallbackModel = catalog?.models.find((m) => m.id === fallbackModelId);
     setSelectedVoice(fallbackModel?.defaultVoice ?? fallbackModel?.voices[0]?.id ?? null);
     setVoiceFilter("");
-    setSpeed(1);
+    setSpeed(0);
     setStartAt(1);
-    setMaxWorkers(2);
+    setMaxWorkers(10);
     setJob(defaultJobState);
     setLogs([]);
     setInputPreview(null);
@@ -624,18 +992,10 @@ function App() {
   }
 
   async function startConversion() {
-    if (!inputs.length) {
-      setError("Escolha um arquivo ou uma pasta de entrada.");
-      return;
-    }
-
-    if (!outputDir) {
-      setError("Escolha a pasta de saida.");
-      return;
-    }
-
+    if (!inputs.length) { setError("Escolha um arquivo ou uma pasta de entrada."); return; }
+    if (!outputDir) { setError("Escolha a pasta de saída."); return; }
     if (currentModel?.supportsSpeakerWav && !speakerWav) {
-      setError("O modelo selecionado requer um arquivo WAV de referencia.");
+      setError("O modelo selecionado requer um arquivo WAV de referência.");
       return;
     }
 
@@ -644,7 +1004,7 @@ function App() {
       output_dir: outputDir,
       model,
       voice: currentModel?.supportsSpeakerWav ? null : selectedVoice,
-      speed,
+      speed: 1.0 + speed / 100,
       speaker_wav: currentModel?.supportsSpeakerWav ? speakerWav || null : null,
       start_at: startAt,
       max_workers: Number.isFinite(maxWorkers) && maxWorkers > 0 ? maxWorkers : null,
@@ -660,18 +1020,12 @@ function App() {
       setJob({
         ...defaultJobState,
         status: "queued",
-        message: "Fila preparada. Iniciando conversao...",
+        message: "Fila preparada. Iniciando conversão...",
         progress: 0,
       });
 
-      const response = await invoke<{ job_id: string }>("start_conversion", {
-        request,
-      });
-
-      setJob((current) => ({
-        ...current,
-        job_id: response.job_id,
-      }));
+      const response = await invoke<{ job_id: string }>("start_conversion", { request });
+      setJob((current) => ({ ...current, job_id: response.job_id }));
     } catch (err) {
       setBusy(false);
       jobStartTimeRef.current = null;
@@ -679,844 +1033,907 @@ function App() {
     }
   }
 
+  async function cancelConversion() {
+    if (!job.job_id) return;
+    try {
+      await invoke("cancel_conversion", { jobId: job.job_id });
+      setBusy(false);
+      setJob((current) => ({
+        ...current,
+        status: "cancelled",
+        message: "Conversão cancelada pelo usuário.",
+      }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
   return (
-    <div className="relative min-h-screen overflow-hidden bg-background text-foreground">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_14%_0%,rgb(171_126_90_/0.18),transparent_28%),radial-gradient(circle_at_86%_12%,rgb(111_133_154_/0.18),transparent_24%)]" />
-      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgb(255_255_255_/0.02),transparent_38%,rgb(255_255_255_/0.03))]" />
-      <div className="pointer-events-none absolute inset-x-0 top-24 h-px bg-[linear-gradient(90deg,transparent,rgb(255_255_255_/0.24),transparent)]" />
+    <div className="daw-shell" data-density={density}>
+      <div className="daw-window">
+        {/* ===== Titlebar ===== */}
+        <div className="daw-titlebar">
+          <div className="daw-tb-dots">
+            <span className="daw-tb-dot r" />
+            <span className="daw-tb-dot y" />
+            <span className="daw-tb-dot g" />
+          </div>
+          <div className="daw-tb-center">
+            <span className="daw-tb-rec" />
+            <span>
+              Audiobook Studio ·{" "}
+              {bridgeOnline ? "bridge online" : "bridge offline"}
+            </span>
+          </div>
+          <div className="daw-tb-right">
+            <span>v0.9 · {currentModel?.id ?? "edge-tts"}</span>
+            <button className="daw-tweaks-btn" onClick={() => setTweakOpen((o) => !o)}>
+              Tweaks
+            </button>
+          </div>
+        </div>
 
-      <div className="relative mx-auto flex min-h-screen max-w-[1720px] flex-col gap-6 px-4 py-5 sm:px-6 sm:py-6 xl:px-10 xl:py-8">
-        <header className="grid gap-4 xl:grid-cols-[1.2fr_0.9fr]">
-          <Card className="overflow-hidden border-white/10 bg-[linear-gradient(135deg,rgb(33_28_25_/0.96),rgb(20_22_28_/0.92))]">
-            <CardContent className="grid gap-8 p-6 xl:grid-cols-[1.2fr_0.8fr] xl:p-8">
-              <div className="grid gap-6">
-                <div className="flex items-center gap-4">
-                  <div className="grid size-14 place-items-center rounded-[1.35rem] border border-white/20 bg-[linear-gradient(135deg,rgb(195_154_114_/0.95),rgb(240_226_204_/0.86))] text-[rgb(41_30_20)] shadow-[0_18px_45px_rgb(0_0_0_/0.26)]">
-                    <Sparkles className="size-5" />
-                  </div>
-                  <div>
-                    <p className="text-[0.68rem] font-semibold uppercase tracking-[0.32em] text-[rgb(206_190_173_/0.72)]">
-                      TTS Studio Desk
-                    </p>
-                    <h1 className="mt-2 font-['Fraunces'] text-[clamp(2rem,4vw,3.45rem)] leading-[0.95] tracking-[-0.03em] text-[rgb(247_240_231)]">
-                      Lote de audio com leitura de estacao.
-                    </h1>
-                  </div>
-                </div>
-
-                <p className="max-w-2xl text-sm leading-7 text-[rgb(213_203_190_/0.84)] sm:text-[0.97rem]">
-                  Interface pensada para produtor solo: preparar entrada, fixar voz e disparar a
-                  sessao sem se perder em painel tecnico. A execucao fica visivel o tempo todo e a
-                  preparacao ocupa o centro da pagina.
-                </p>
-
-                <div className="grid gap-3 sm:grid-cols-3">
-                  <div className="rounded-[1.6rem] border border-white/10 bg-white/[0.04] px-4 py-4">
-                    <p className="text-[0.68rem] uppercase tracking-[0.22em] text-[rgb(206_190_173_/0.64)]">
-                      Entrada
-                    </p>
-                    <p className="mt-2 text-sm font-medium text-[rgb(248_242_236)]">
-                      {sourceModeConfig.label}
-                    </p>
-                  </div>
-                  <div className="rounded-[1.6rem] border border-white/10 bg-white/[0.04] px-4 py-4">
-                    <p className="text-[0.68rem] uppercase tracking-[0.22em] text-[rgb(206_190_173_/0.64)]">
-                      Modelo
-                    </p>
-                    <p className="mt-2 text-sm font-medium text-[rgb(248_242_236)]">
-                      {currentModel?.name ?? model}
-                    </p>
-                  </div>
-                  <div className="rounded-[1.6rem] border border-white/10 bg-white/[0.04] px-4 py-4">
-                    <p className="text-[0.68rem] uppercase tracking-[0.22em] text-[rgb(206_190_173_/0.64)]">
-                      Sessao
-                    </p>
-                    <p className="mt-2 text-sm font-medium text-[rgb(248_242_236)]">{readinessCopy}</p>
-                  </div>
-                </div>
+        <div className="daw-app">
+          {/* ===== Sidebar ===== */}
+          <aside className="daw-sidebar">
+            <div className="daw-brand">
+              <div className="daw-brand-mark">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="oklch(0.82 0.14 78)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 12h2" /><path d="M8 8v8" /><path d="M12 5v14" /><path d="M16 9v6" /><path d="M19 12h2" />
+                </svg>
               </div>
-
-              <div className="grid gap-4 self-start xl:border-l xl:border-white/10 xl:pl-6">
-                <div className="rounded-[1.8rem] border border-white/10 bg-[rgb(255_255_255_/0.04)] p-5">
-                  <p className="text-[0.68rem] uppercase tracking-[0.24em] text-[rgb(206_190_173_/0.66)]">
-                    Sala de controle
-                  </p>
-                  <div className="mt-4 flex items-start justify-between gap-4">
-                    <div>
-                      <p className="text-3xl font-semibold tracking-[-0.04em] text-[rgb(248_242_236)]">
-                        {timerLabel}
-                      </p>
-                      <p className="mt-2 text-sm text-[rgb(214_204_191_/0.78)]">
-                        {job.status === "completed"
-                          ? "Tempo final da ultima rodada."
-                          : job.status === "running"
-                            ? "Cronometro armado para a sessao atual."
-                            : "Nenhuma captura em andamento."}
-                      </p>
-                    </div>
-                    <Badge
-                      variant="outline"
-                      className={cn(
-                        "rounded-full px-3 py-1 text-[0.68rem] uppercase tracking-[0.18em]",
-                        statusBadgeClass(job.status),
-                      )}
-                    >
-                      {statusLabel}
-                    </Badge>
-                  </div>
-                </div>
-
-                <div className="rounded-[1.8rem] border border-[rgb(205_164_126_/0.24)] bg-[linear-gradient(180deg,rgb(198_158_120_/0.12),rgb(255_255_255_/0.02))] p-5">
-                  <p className="text-[0.68rem] uppercase tracking-[0.24em] text-[rgb(216_198_178_/0.7)]">
-                    Mesa pronta
-                  </p>
-                  <p className="mt-3 text-sm leading-7 text-[rgb(242_233_222_/0.9)]">{setupSummary}</p>
-                  <p className="mt-3 text-xs uppercase tracking-[0.18em] text-[rgb(216_198_178_/0.62)]">
-                    {outputDir ? `Saida em ${outputLabel}` : "Sem pasta de saida definida"}
-                  </p>
-                </div>
+              <div>
+                <div className="daw-brand-name">Audiobook Studio</div>
+                <div className="daw-brand-ver">tts workbench · v0.9</div>
               </div>
-            </CardContent>
-          </Card>
+            </div>
 
-          <Card className="border-white/10 bg-[linear-gradient(180deg,rgb(24_27_34_/0.92),rgb(18_18_24_/0.96))]">
-            <CardContent className="grid gap-5 p-6">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-[0.68rem] font-semibold uppercase tracking-[0.26em] text-muted-foreground">
-                    Execucao
-                  </p>
-                  <h2 className="mt-2 font-['Fraunces'] text-3xl tracking-[-0.03em] text-foreground">
-                    Estado vivo
-                  </h2>
-                </div>
-                {busy ? (
-                  <Badge variant="secondary" className="gap-1 rounded-full px-3 py-1 text-[0.68rem] uppercase tracking-[0.16em]">
-                    <LoaderCircle className="size-3.5 animate-spin" />
-                    processando
-                  </Badge>
-                ) : null}
+            <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+              <div className="daw-nav-label">Sessão</div>
+              <div
+                className={`daw-nav-item ${navView === "converter" ? "active" : ""}`}
+                onClick={() => setNavView("converter")}
+              >
+                <svg className="daw-nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 12h2" /><path d="M8 8v8" /><path d="M12 5v14" /><path d="M16 9v6" /><path d="M19 12h2" />
+                </svg>
+                Converter
+                <span className="daw-nav-kbd">⌘1</span>
               </div>
-
-              <div className="rounded-[1.8rem] border border-white/10 bg-white/[0.04] p-5">
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <p className="text-sm font-medium text-foreground">{job.message}</p>
-                    <p className="mt-2 text-xs uppercase tracking-[0.2em] text-muted-foreground">
-                      {statusLabel}
-                    </p>
-                  </div>
-                  <strong className="text-3xl font-semibold tracking-[-0.04em] text-foreground">
-                    {formatPercent(totalProgress)}
-                  </strong>
-                </div>
-                <Progress className="mt-4 h-2.5 bg-white/8" value={Math.round(totalProgress * 100)} />
+              <div
+                className={`daw-nav-item ${navView === "agrupar" ? "active" : ""}`}
+                onClick={() => setNavView("agrupar")}
+              >
+                <svg className="daw-nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2V9M9 21H5a2 2 0 0 1-2-2V9m0 0h18" />
+                </svg>
+                Agrupar
+                <span className="daw-nav-kbd">⌘2</span>
               </div>
-
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="rounded-[1.5rem] border border-white/10 bg-white/[0.03] p-4">
-                  <p className="text-[0.68rem] uppercase tracking-[0.22em] text-muted-foreground">
-                    Arquivo atual
-                  </p>
-                  <p className="mt-2 text-sm leading-6 text-foreground">{fileProgressLabel}</p>
-                </div>
-                <div className="rounded-[1.5rem] border border-white/10 bg-white/[0.03] p-4">
-                  <p className="text-[0.68rem] uppercase tracking-[0.22em] text-muted-foreground">
-                    Progresso do lote
-                  </p>
-                  <p className="mt-2 text-sm leading-6 text-foreground">{chunkProgressLabel}</p>
-                </div>
+              <div className="daw-nav-item">
+                <svg className="daw-nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                </svg>
+                Preferências
               </div>
+            </div>
 
-              <div className="rounded-[1.5rem] border border-white/10 bg-white/[0.03] p-4">
-                <p className="text-[0.68rem] uppercase tracking-[0.22em] text-muted-foreground">
-                  Faixa recente
-                </p>
-                <div className="mt-3 grid gap-2">
-                  {recentLogs.length ? (
-                    recentLogs.map((line, index) => (
-                      <p
-                        key={`${index}-${line}`}
-                        className="rounded-2xl border border-white/8 bg-black/10 px-3 py-2 text-sm leading-6 text-[rgb(228_220_209_/0.84)]"
-                      >
-                        {line}
-                      </p>
-                    ))
-                  ) : (
-                    <p className="text-sm leading-6 text-muted-foreground">
-                      Os eventos mais recentes do bridge aparecerao aqui quando a conversao
-                      comecar.
-                    </p>
-                  )}
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </header>
-
-        <main className="grid gap-6 xl:grid-cols-[1.18fr_0.82fr]">
-          <Card className="overflow-hidden border-white/10 bg-[linear-gradient(180deg,rgb(249_246_240_/0.985),rgb(237_231_221_/0.94))] text-[rgb(42_35_29)] shadow-[0_30px_90px_rgb(0_0_0_/0.2)]">
-            <CardHeader className="gap-4 border-b border-[rgb(66_49_33_/0.1)] px-6 py-6 xl:px-8 xl:py-7">
-              <div className="flex flex-wrap items-start justify-between gap-4">
-                <div className="max-w-3xl">
-                  <p className="text-[0.68rem] font-semibold uppercase tracking-[0.28em] text-[rgb(110_91_74_/0.72)]">
-                    Preparacao
-                  </p>
-                  <CardTitle className="mt-2 font-['Fraunces'] text-[clamp(2rem,3.5vw,3rem)] font-semibold leading-[0.96] tracking-[-0.04em] text-[rgb(43_33_24)]">
-                    Configure a mesa antes de rodar o lote.
-                  </CardTitle>
-                </div>
-                <Badge
-                  variant="outline"
-                  className="rounded-full border-[rgb(80_61_42_/0.18)] bg-[rgb(255_255_255_/0.55)] px-3 py-1 text-[0.68rem] uppercase tracking-[0.16em] text-[rgb(73_57_43)]"
-                >
-                  {catalog ? `${modelOptions.length}/${catalog.models.length} modelos` : "catalogo"}
-                </Badge>
-              </div>
-              <CardDescription className="max-w-3xl text-[0.97rem] leading-7 text-[rgb(94_77_60_/0.84)]">
-                O setup fica em sequencia operacional: origem do texto, destino, modelo e voz.
-                Nada aqui concorre com o painel de execucao.
-              </CardDescription>
-            </CardHeader>
-
-            <CardContent className="grid gap-8 px-6 py-6 xl:px-8 xl:py-8">
-              <section className="grid gap-5">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <p className="text-[0.68rem] font-semibold uppercase tracking-[0.22em] text-[rgb(110_91_74_/0.7)]">
-                      Fonte do texto
-                    </p>
-                    <h3 className="mt-2 text-2xl font-semibold tracking-[-0.03em] text-[rgb(45_33_24)]">
-                      Entrada e saida em uma unica faixa
-                    </h3>
-                  </div>
-                  <Badge
-                    variant="outline"
-                    className="rounded-full border-[rgb(91_70_49_/0.16)] bg-[rgb(255_255_255_/0.46)] px-3 py-1 text-[0.68rem] uppercase tracking-[0.16em] text-[rgb(73_57_43)]"
+            <div className="daw-sidebar-footer">
+              <div className="daw-sys-card">
+                <div className="daw-sys-row">
+                  <span>bridge</span>
+                  <span
+                    className="daw-sys-v"
+                    style={{ color: bridgeOnline ? "var(--daw-teal)" : "var(--daw-red)" }}
                   >
-                    {sourceModeConfig.label}
-                  </Badge>
+                    ● {bridgeOnline ? "online" : "offline"}
+                  </span>
                 </div>
+                <div className="daw-sys-row">
+                  <span>modelo</span>
+                  <span className="daw-sys-v">{currentModel?.id ?? "—"}</span>
+                </div>
+                <div className="daw-sys-row">
+                  <span>workers</span>
+                  <span className="daw-sys-v">{maxWorkers}</span>
+                </div>
+                <div className="daw-sys-row">
+                  <span>status</span>
+                  <span
+                    className="daw-sys-v"
+                    style={{
+                      color:
+                        job.status === "running"
+                          ? "var(--daw-amber)"
+                          : job.status === "completed"
+                            ? "var(--daw-green)"
+                            : job.status === "error"
+                              ? "var(--daw-red)"
+                              : "var(--daw-ink-2)",
+                    }}
+                  >
+                    {job.status}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </aside>
 
-                <Tabs value={sourceMode} onValueChange={(value) => setSourceMode(value as SourceMode)}>
-                  <TabsList className="grid h-auto w-full grid-cols-3 rounded-[1.5rem] bg-[rgb(67_50_33_/0.07)] p-1.5">
-                    {sourceModeOptions.map((item) => {
-                      const Icon = item.icon;
-                      return (
-                        <TabsTrigger
-                          key={item.id}
-                          value={item.id}
-                          className="flex h-auto flex-col items-start gap-1 rounded-[1.15rem] px-4 py-4 text-left data-[state=active]:bg-[rgb(255_255_255_/0.82)] data-[state=active]:shadow-[0_10px_26px_rgb(0_0_0_/0.06)]"
-                        >
-                          <span className="flex items-center gap-2 text-sm font-semibold text-[rgb(48_37_28)]">
-                            <Icon className="size-4 text-[rgb(163_111_72)]" />
-                            {item.label}
-                          </span>
-                          <span className="text-xs leading-5 text-[rgb(106_89_72)]">
-                            {item.description}
-                          </span>
-                        </TabsTrigger>
-                      );
-                    })}
-                  </TabsList>
-                </Tabs>
+          {/* ===== Main ===== */}
+          <main className="daw-main">
+            {navView === "agrupar" ? (
+              <AgruparView />
+            ) : (<>
+            {/* Session bar */}
+            <section className="daw-session">
+              <div className="daw-sess-cell title">
+                <div className="k">Sessão atual</div>
+                <div className="v" title={inputs[0] ?? ""}>{sessionTitle}</div>
+                <div className="sub">{sessionSubtitle}</div>
+              </div>
+              <div className="daw-sess-cell">
+                <div className="k">Entrada</div>
+                <div className="v">
+                  {sourceMode === "file"
+                    ? "1 arquivo .md"
+                    : sourceMode === "files"
+                      ? `${inputs.length} arquivos`
+                      : "pasta"}
+                </div>
+              </div>
+              <div className="daw-sess-cell">
+                <div className="k">Modelo</div>
+                <div className="v">{currentModel?.name ?? "—"}</div>
+              </div>
+              <div className="daw-sess-cell">
+                <div className="k">Saída</div>
+                <div className="v">{outputFormat.toUpperCase()} · 192k</div>
+              </div>
+              <div className="daw-sess-cell clock">
+                <div className="k">
+                  {job.status === "running" ? "Decorrido" : "Tempo total"}
+                </div>
+                <div className="v">{elapsedDisplay}</div>
+              </div>
+            </section>
 
-                <div className="grid gap-4 rounded-[2rem] border border-[rgb(70_54_36_/0.12)] bg-[rgb(255_255_255_/0.38)] p-5">
-                  <div className="grid gap-4 md:grid-cols-[1.1fr_0.9fr]">
-                    <div className="grid gap-2">
-                      <Label htmlFor="input-preview" className="text-[rgb(58_43_30)]">
-                        Entrada atual
-                      </Label>
-                      <Input
-                        id="input-preview"
-                        value={selectedPreview}
-                        readOnly
-                        placeholder="Nenhuma entrada selecionada"
-                        className="h-12 rounded-[1.1rem] border-[rgb(82_64_46_/0.14)] bg-[rgb(255_255_255_/0.65)] px-4 text-[rgb(47_35_25)] placeholder:text-[rgb(119_100_82)]"
-                      />
-                    </div>
-                    <div className="grid gap-2">
-                      <Label htmlFor="output-dir" className="text-[rgb(58_43_30)]">
-                        Pasta de saida
-                      </Label>
-                      <Input
-                        id="output-dir"
-                        value={outputDir}
-                        readOnly
-                        placeholder="Selecione a pasta de saida"
-                        className="h-12 rounded-[1.1rem] border-[rgb(82_64_46_/0.14)] bg-[rgb(255_255_255_/0.65)] px-4 text-[rgb(47_35_25)] placeholder:text-[rgb(119_100_82)]"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex flex-wrap gap-3">
-                    <Button
-                      onClick={sourceMode === "directory" ? chooseFolder : chooseFiles}
-                      className="min-w-44 rounded-full px-5"
-                    >
-                      {sourceModeConfig.actionLabel}
-                    </Button>
-                    <Button variant="outline" onClick={chooseOutputDir} className="rounded-full px-5">
-                      <FolderOpen className="size-4" />
-                      Escolher saida
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      onClick={resetForm}
-                      className="rounded-full px-5 text-[rgb(88_67_49)] hover:bg-[rgb(83_62_43_/0.08)] hover:text-[rgb(49_37_27)]"
-                    >
-                      <RefreshCcw className="size-4" />
-                      Limpar sessao
-                    </Button>
-                  </div>
-
-                  <div className="grid gap-4 lg:grid-cols-[1.15fr_0.85fr]">
-                    <div className="rounded-[1.5rem] border border-[rgb(82_64_46_/0.12)] bg-[rgb(255_255_255_/0.55)] p-4">
-                      <p className="text-[0.68rem] uppercase tracking-[0.2em] text-[rgb(110_91_74_/0.72)]">
-                        Leitura rapida
-                      </p>
-                      <p className="mt-3 text-sm leading-7 text-[rgb(74_58_42)]">{setupSummary}</p>
-                    </div>
-
-                    <div className="rounded-[1.5rem] border border-[rgb(82_64_46_/0.12)] bg-[rgb(255_255_255_/0.55)] p-4">
-                      <p className="text-[0.68rem] uppercase tracking-[0.2em] text-[rgb(110_91_74_/0.72)]">
-                        Arquivos visiveis
-                      </p>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {(selectedFiles.length ? selectedFiles : ["Nenhum arquivo"]).map((label) => (
+            {/* Config panel */}
+            <section className="daw-panel">
+              <header className="daw-panel-head">
+                <span className="daw-panel-tag">Configuração</span>
+                <h3>Modelo, voz, entrada e saída</h3>
+                <span className="daw-panel-sub" />
+                {validationHints.length === 0 ? (
+                  <span className="daw-chip teal" style={{ cursor: "default" }}>
+                    {inputs.length ? "pronto" : "aguardando"}
+                  </span>
+                ) : (
+                  <span className="daw-chip" style={{ color: "var(--daw-yellow)", borderColor: "oklch(0.62 0.12 78 / 0.4)", cursor: "default" }}>
+                    {validationHints.length} pendente{validationHints.length > 1 ? "s" : ""}
+                  </span>
+                )}
+              </header>
+              <div className="daw-panel-body">
+                <div className="daw-rack">
+                  {/* Left col: Model + Voice */}
+                  <div className="daw-col">
+                    <div>
+                      <span className="daw-row-label">Modelo ativo</span>
+                      <div className="daw-model-select">
+                        <span className="daw-led" />
+                        <span style={{ color: "var(--daw-ink-0)", fontWeight: 500 }}>
+                          {currentModel?.name ?? "—"}
+                        </span>
+                        <span style={{ color: "var(--daw-ink-3)", fontFamily: "var(--daw-font-mono)", fontSize: "11px" }}>
+                          · {currentModel?.offline ? "offline" : "online"}
+                        </span>
+                      </div>
+                      <div className="daw-chips">
+                        {modelOptions.map((m) => (
                           <span
-                            key={label}
-                            className="rounded-full border border-[rgb(88_68_48_/0.14)] bg-[rgb(255_255_255_/0.72)] px-3 py-1 text-xs font-medium text-[rgb(79_60_43)]"
+                            key={m.id}
+                            className={`daw-chip ${model === m.id ? "amber" : ""}`}
+                            onClick={() => setModel(m.id)}
                           >
-                            {label}
+                            {m.name.toLowerCase()}
                           </span>
                         ))}
                       </div>
-                    </div>
-                  </div>
-                </div>
-              </section>
-
-              <section className="grid gap-5">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <p className="text-[0.68rem] font-semibold uppercase tracking-[0.22em] text-[rgb(110_91_74_/0.7)]">
-                      Voz e motor
-                    </p>
-                    <h3 className="mt-2 text-2xl font-semibold tracking-[-0.03em] text-[rgb(45_33_24)]">
-                      Escolha o timbre antes de gravar
-                    </h3>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <Badge
-                      variant="outline"
-                      className="rounded-full border-[rgb(91_70_49_/0.16)] bg-[rgb(255_255_255_/0.5)] px-3 py-1 text-[0.68rem] uppercase tracking-[0.16em] text-[rgb(73_57_43)]"
-                    >
-                      {voicePanelKicker}
-                    </Badge>
-                    <Badge
-                      variant="outline"
-                      className="rounded-full border-[rgb(91_70_49_/0.16)] bg-[rgb(255_255_255_/0.5)] px-3 py-1 text-[0.68rem] uppercase tracking-[0.16em] text-[rgb(73_57_43)]"
-                    >
-                      {activeVoiceLabel}
-                    </Badge>
-                  </div>
-                </div>
-
-                <div className="grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
-                  <div className="grid gap-4 rounded-[2rem] border border-[rgb(70_54_36_/0.12)] bg-[rgb(255_255_255_/0.38)] p-5">
-                    <div className="grid gap-2">
-                      <Label htmlFor="model-select" className="text-[rgb(58_43_30)]">
-                        Modelo ativo
-                      </Label>
-                      <select
-                        id="model-select"
-                        value={model}
-                        onChange={(event) => {
-                          const value = event.target.value;
-                          const nextModel = catalog?.models.find((item) => item.id === value);
-                          setModel(value);
-                          setSelectedVoice(
-                            value === "xtts"
-                              ? null
-                              : nextModel?.defaultVoice ?? nextModel?.voices[0]?.id ?? null,
-                          );
-                          setError(null);
-                        }}
-                        className="flex h-12 w-full items-center rounded-[1.15rem] border border-[rgb(82_64_46_/0.14)] bg-[rgb(255_255_255_/0.65)] px-4 py-2 text-sm text-[rgb(47_35_25)] outline-none ring-offset-background focus:ring-2 focus:ring-[rgb(168_120_82_/0.3)] focus:ring-offset-2"
-                      >
-                        {(modelOptions.length ? modelOptions : catalog?.models ?? []).map((item) => (
-                          <option key={item.id} value={item.id}>
-                            {item.name}
-                          </option>
-                        ))}
-                      </select>
+                      <p className="daw-row-help">{currentModel?.description ?? "Selecione um modelo."}</p>
                     </div>
 
-                    <div className="rounded-[1.5rem] border border-[rgb(82_64_46_/0.12)] bg-[rgb(255_255_255_/0.55)] p-4">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Badge
-                          variant="outline"
-                          className="rounded-full border-[rgb(91_70_49_/0.16)] bg-[rgb(255_255_255_/0.72)] px-3 py-1 text-[0.68rem] uppercase tracking-[0.14em] text-[rgb(73_57_43)]"
-                        >
-                          {currentModel?.name ?? model}
-                        </Badge>
-                        <Badge
-                          variant="outline"
-                          className="rounded-full border-[rgb(91_70_49_/0.16)] bg-[rgb(255_255_255_/0.72)] px-3 py-1 text-[0.68rem] uppercase tracking-[0.14em] text-[rgb(73_57_43)]"
-                        >
-                          {currentModelAllowsSpeakerWav ? "WAV obrigatorio" : "voz pronta"}
-                        </Badge>
-                        <Badge
-                          variant="outline"
-                          className="rounded-full border-[rgb(91_70_49_/0.16)] bg-[rgb(255_255_255_/0.72)] px-3 py-1 text-[0.68rem] uppercase tracking-[0.14em] text-[rgb(73_57_43)]"
-                        >
-                          {currentModelAllowsSpeed ? "speed livre" : "speed fixo"}
-                        </Badge>
-                      </div>
-                      <p className="mt-3 text-sm leading-7 text-[rgb(74_58_42)]">{modelDescriptor}</p>
-                    </div>
+                    <div className="daw-hr" />
 
                     {showSpeakerPicker ? (
-                      <div className="grid gap-3 rounded-[1.5rem] border border-[rgb(82_64_46_/0.12)] bg-[rgb(255_255_255_/0.55)] p-4">
-                        <div>
-                          <p className="text-[0.68rem] uppercase tracking-[0.2em] text-[rgb(110_91_74_/0.72)]">
-                            WAV de referencia
-                          </p>
-                          <p className="mt-2 text-sm leading-7 text-[rgb(74_58_42)]">
-                            Use um trecho limpo para definir a identidade da voz clonada.
-                          </p>
+                      <div>
+                        <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "8px" }}>
+                          <span className="daw-row-label" style={{ margin: 0 }}>WAV de referência</span>
                         </div>
-                        <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
-                          <div className="grid gap-2">
-                            <Label htmlFor="speaker-wav" className="text-[rgb(58_43_30)]">
-                              Arquivo WAV
-                            </Label>
-                            <Input
-                              id="speaker-wav"
-                              value={speakerWav}
-                              onChange={(event) => setSpeakerWav(event.target.value)}
-                              placeholder="Escolha o WAV de referencia"
-                              className="h-12 rounded-[1.1rem] border-[rgb(82_64_46_/0.14)] bg-[rgb(255_255_255_/0.65)] px-4 text-[rgb(47_35_25)] placeholder:text-[rgb(119_100_82)]"
-                            />
-                          </div>
-                          <Button variant="outline" onClick={chooseSpeakerWav} className="rounded-full px-5">
-                            <Volume2 className="size-4" />
-                            Escolher WAV
-                          </Button>
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
-
-                  <div className="grid gap-4 rounded-[2rem] border border-[rgb(70_54_36_/0.12)] bg-[rgb(255_255_255_/0.38)] p-5">
-                    {!showSpeakerPicker ? (
-                      <>
-                        <div className="flex flex-wrap items-center justify-between gap-3">
-                          <div>
-                            <p className="text-[0.68rem] uppercase tracking-[0.2em] text-[rgb(110_91_74_/0.72)]">
-                              Biblioteca de vozes
-                            </p>
-                            <p className="mt-2 text-sm leading-7 text-[rgb(74_58_42)]">
-                              Filtre pelo nome ou codigo da voz e confirme a escolha antes do lote.
-                            </p>
-                          </div>
-                          <Badge
-                            variant="outline"
-                            className="rounded-full border-[rgb(91_70_49_/0.16)] bg-[rgb(255_255_255_/0.72)] px-3 py-1 text-[0.68rem] uppercase tracking-[0.14em] text-[rgb(73_57_43)]"
-                          >
-                            {availableVoices.length} opcoes
-                          </Badge>
-                        </div>
-
-                        <div className="grid gap-2">
-                          <Label htmlFor="voice-filter" className="text-[rgb(58_43_30)]">
-                            Buscar voz
-                          </Label>
-                          <div className="relative">
-                            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[rgb(118_98_78)]" />
-                            <Input
-                              id="voice-filter"
-                              value={voiceFilter}
-                              onChange={(event) => setVoiceFilter(event.target.value)}
-                              placeholder="Filtrar por nome ou codigo"
-                              className="h-12 rounded-[1.1rem] border-[rgb(82_64_46_/0.14)] bg-[rgb(255_255_255_/0.65)] px-10 text-[rgb(47_35_25)] placeholder:text-[rgb(119_100_82)]"
-                            />
-                          </div>
-                        </div>
-
-                        <ScrollArea className="max-h-80 pr-3">
-                          <div className="grid gap-2 md:grid-cols-2">
-                            {availableVoices.map((voice) => {
-                              const selected = selectedVoice === voice.id;
-                              return (
-                                <button
-                                  key={voice.id}
-                                  type="button"
-                                  onClick={() => setSelectedVoice(voice.id)}
-                                  className={cn(
-                                    "rounded-[1.35rem] border px-4 py-4 text-left transition-all hover:-translate-y-0.5",
-                                    selected
-                                      ? "border-[rgb(164_114_74_/0.35)] bg-[rgb(157_116_79_/0.12)] shadow-[0_12px_30px_rgb(115_79_48_/0.08)]"
-                                      : "border-[rgb(82_64_46_/0.12)] bg-[rgb(255_255_255_/0.56)] hover:border-[rgb(164_114_74_/0.25)]",
-                                  )}
-                                >
-                                  <div className="flex items-center justify-between gap-2">
-                                    <strong className="text-sm font-semibold text-[rgb(49_36_27)]">
-                                      {voice.label}
-                                    </strong>
-                                    {selected ? (
-                                      <CheckCircle2 className="size-4 text-[rgb(156_109_71)]" />
-                                    ) : null}
-                                  </div>
-                                  <p className="mt-1 text-xs tracking-[0.05em] text-[rgb(111_92_73)]">
-                                    {voice.id}
-                                  </p>
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </ScrollArea>
-                      </>
-                    ) : (
-                      <div className="rounded-[1.5rem] border border-[rgb(82_64_46_/0.12)] bg-[rgb(255_255_255_/0.55)] p-5">
-                        <p className="text-[0.68rem] uppercase tracking-[0.2em] text-[rgb(110_91_74_/0.72)]">
-                          Timbre selecionado
-                        </p>
-                        <p className="mt-3 text-sm leading-7 text-[rgb(74_58_42)]">
-                          O XTTS vai usar o WAV informado como referencia principal da sessao.
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </section>
-
-              <section className="grid gap-5">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <p className="text-[0.68rem] font-semibold uppercase tracking-[0.22em] text-[rgb(110_91_74_/0.7)]">
-                      Disparo
-                    </p>
-                    <h3 className="mt-2 text-2xl font-semibold tracking-[-0.03em] text-[rgb(45_33_24)]">
-                      Lance o lote quando a sessao estiver limpa
-                    </h3>
-                  </div>
-                </div>
-
-                <div className="grid gap-4 rounded-[2rem] border border-[rgb(70_54_36_/0.12)] bg-[rgb(255_255_255_/0.38)] p-5">
-                  <div className="flex flex-wrap items-center gap-2">
-                    {validationHints.length ? (
-                      validationHints.map((hint) => (
-                        <Badge
-                          key={hint}
-                          variant="outline"
-                          className="rounded-full border-[rgb(156_94_75_/0.25)] bg-[rgb(169_111_93_/0.1)] px-3 py-1 text-[0.68rem] uppercase tracking-[0.12em] text-[rgb(128_74_58)]"
-                        >
-                          <AlertCircle className="size-3.5" />
-                          {hint}
-                        </Badge>
-                      ))
-                    ) : (
-                      <Badge
-                        variant="outline"
-                        className="rounded-full border-[rgb(84_112_80_/0.22)] bg-[rgb(95_133_84_/0.1)] px-3 py-1 text-[0.68rem] uppercase tracking-[0.12em] text-[rgb(76_99_61)]"
-                      >
-                        <CheckCircle2 className="size-3.5" />
-                        Sessao pronta para converter
-                      </Badge>
-                    )}
-                  </div>
-
-                  <div className="flex flex-wrap gap-3">
-                    <Button onClick={startConversion} disabled={!canStart} className="min-w-52 rounded-full px-6">
-                      <Play className="size-4" />
-                      {busy ? "Processando..." : "Iniciar conversao"}
-                    </Button>
-                    <Button variant="outline" onClick={resetForm} className="rounded-full px-6">
-                      <RefreshCcw className="size-4" />
-                      Redefinir mesa
-                    </Button>
-                  </div>
-
-                  {error ? (
-                    <div className="rounded-[1.4rem] border border-[rgb(156_94_75_/0.22)] bg-[rgb(169_111_93_/0.08)] px-4 py-3 text-sm leading-6 text-[rgb(119_68_54)]">
-                      {error}
-                    </div>
-                  ) : null}
-                </div>
-              </section>
-            </CardContent>
-          </Card>
-
-          <div className="grid gap-6">
-            <Card className="border-white/10 bg-[linear-gradient(180deg,rgb(22_24_30_/0.96),rgb(18_18_22_/0.98))] xl:sticky xl:top-6">
-              <CardHeader className="gap-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-[0.68rem] font-semibold uppercase tracking-[0.24em] text-muted-foreground">
-                      Sessao em curso
-                    </p>
-                    <CardTitle className="mt-2 font-['Fraunces'] text-3xl tracking-[-0.03em] text-foreground">
-                      Painel do lote
-                    </CardTitle>
-                  </div>
-                  <Badge className={statusBadgeClass(job.status)} variant="outline">
-                    {job.status}
-                  </Badge>
-                </div>
-                <CardDescription className="text-[0.95rem] leading-7 text-[rgb(208_213_222_/0.74)]">
-                  Arquivo, chunk, tempo e destino final reunidos em um mesmo painel de leitura.
-                </CardDescription>
-              </CardHeader>
-
-              <CardContent className="grid gap-5">
-                <div className="rounded-[1.7rem] border border-white/10 bg-white/[0.04] p-5">
-                  <div className="flex items-center gap-3">
-                    <div className="grid size-12 place-items-center rounded-[1.2rem] bg-[rgb(209_171_129_/0.14)] text-[rgb(231_209_184)]">
-                      <Gauge className="size-5" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium text-foreground">{job.message}</p>
-                      <p className="mt-1 text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                        {statusLabel}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="mt-5 flex items-end justify-between gap-3">
-                    <div>
-                      <p className="text-[0.68rem] uppercase tracking-[0.22em] text-muted-foreground">
-                        Ritmo atual
-                      </p>
-                      <p className="mt-2 text-4xl font-semibold tracking-[-0.05em] text-foreground">
-                        {formatPercent(totalProgress)}
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-[0.68rem] uppercase tracking-[0.22em] text-muted-foreground">
-                        Tempo
-                      </p>
-                      <p className="mt-2 text-xl font-semibold tracking-[-0.03em] text-[rgb(232_211_189)]">
-                        {timerLabel}
-                      </p>
-                    </div>
-                  </div>
-                  <Progress className="mt-5 h-2.5 bg-white/8" value={Math.round(totalProgress * 100)} />
-                </div>
-
-                <div className="grid gap-3">
-                  <div className="rounded-[1.45rem] border border-white/10 bg-white/[0.03] p-4">
-                    <p className="text-[0.68rem] uppercase tracking-[0.2em] text-muted-foreground">
-                      Arquivo
-                    </p>
-                    <p className="mt-2 text-sm leading-6 text-foreground">{fileProgressLabel}</p>
-                  </div>
-                  <div className="rounded-[1.45rem] border border-white/10 bg-white/[0.03] p-4">
-                    <p className="text-[0.68rem] uppercase tracking-[0.2em] text-muted-foreground">
-                      Chunk
-                    </p>
-                    <p className="mt-2 text-sm leading-6 text-foreground">{chunkProgressLabel}</p>
-                  </div>
-                  <div className="rounded-[1.45rem] border border-white/10 bg-white/[0.03] p-4">
-                    <p className="text-[0.68rem] uppercase tracking-[0.2em] text-muted-foreground">
-                      Destino
-                    </p>
-                    <p className="mt-2 text-sm leading-6 text-foreground">{outputLabel}</p>
-                  </div>
-                </div>
-
-                <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
-                  <CollapsibleTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      className="w-full justify-between rounded-[1.45rem] border border-white/10 bg-white/[0.03] px-4 py-6 hover:bg-white/[0.06]"
-                    >
-                      <span className="flex items-center gap-2">
-                        <Settings2 className="size-4" />
-                        Ajustes avancados
-                      </span>
-                      <ChevronDown
-                        className={cn("size-4 transition-transform", advancedOpen && "rotate-180")}
-                      />
-                    </Button>
-                  </CollapsibleTrigger>
-                  <CollapsibleContent className="pt-4">
-                    <div className="grid gap-4 rounded-[1.6rem] border border-white/10 bg-white/[0.03] p-4">
-                      <div className="grid gap-4 sm:grid-cols-2">
-                        <div className="grid gap-2">
-                          <Label htmlFor="start-at">Start at</Label>
-                          <Input
-                            id="start-at"
-                            type="number"
-                            min={1}
-                            value={startAt}
-                            onChange={(event) => setStartAt(Number(event.target.value) || 1)}
-                            className="h-11 rounded-[1rem] border-white/10 bg-black/10 px-4"
-                          />
-                          <p className="text-xs text-muted-foreground">
-                            Chunk inicial no arquivo unico ou capitulo inicial na pasta.
-                          </p>
-                        </div>
-
-                        <div className="grid gap-2">
-                          <Label htmlFor="workers">Workers</Label>
-                          <Input
-                            id="workers"
-                            type="number"
-                            min={1}
-                            value={maxWorkers}
-                            onChange={(event) => setMaxWorkers(Number(event.target.value) || 1)}
-                            className="h-11 rounded-[1rem] border-white/10 bg-black/10 px-4"
-                          />
-                          <p className="text-xs text-muted-foreground">Paralelismo por chunk.</p>
-                        </div>
-                      </div>
-
-                      <div className="grid gap-2">
-                        <div className="flex items-center justify-between gap-3">
-                          <Label htmlFor="speed">Velocidade</Label>
-                          <Badge variant="secondary">
-                            {currentModelAllowsSpeed ? `${speed.toFixed(1)}x` : "Fixo"}
-                          </Badge>
-                        </div>
-                        <Slider
-                          id="speed"
-                          min={0.5}
-                          max={2}
-                          step={0.1}
-                          value={[speed]}
-                          onValueChange={(values) => setSpeed(values[0] ?? 1)}
-                          disabled={!currentModelAllowsSpeed}
-                        />
-                        <p className="text-xs text-muted-foreground">
-                          {currentModelAllowsSpeed
-                            ? "Ajuste fino para leitura mais lenta ou mais natural."
-                            : "Este modelo nao expoe velocidade ajustavel."}
-                        </p>
-                      </div>
-                    </div>
-                  </CollapsibleContent>
-                </Collapsible>
-              </CardContent>
-            </Card>
-
-            {(sourceMode !== "file" || jobFiles.length > 1) && (
-              <Card className="border-white/10 bg-[linear-gradient(180deg,rgb(22_24_30_/0.96),rgb(18_18_22_/0.98))]">
-                <CardHeader className="gap-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="text-[0.68rem] font-semibold uppercase tracking-[0.24em] text-muted-foreground">
-                        Capitulos
-                      </p>
-                      <CardTitle className="mt-2 font-['Fraunces'] text-3xl tracking-[-0.03em] text-foreground">
-                        Painel por arquivo
-                      </CardTitle>
-                    </div>
-                    <Badge variant="outline">{jobFiles.length} itens</Badge>
-                  </div>
-                  <CardDescription className="text-[0.95rem] leading-7 text-[rgb(208_213_222_/0.74)]">
-                    Veja o lote inteiro, identifique falhas e recrie somente o capítulo necessário.
-                  </CardDescription>
-                </CardHeader>
-
-                <CardContent className="grid gap-4">
-                  <div className="grid gap-3 sm:grid-cols-3">
-                    <div className="rounded-[1.3rem] border border-white/10 bg-white/[0.03] p-4">
-                      <p className="text-[0.68rem] uppercase tracking-[0.2em] text-muted-foreground">
-                        Convertidos
-                      </p>
-                      <p className="mt-2 text-2xl font-semibold tracking-[-0.04em] text-foreground">
-                        {convertedFiles}
-                      </p>
-                    </div>
-                    <div className="rounded-[1.3rem] border border-white/10 bg-white/[0.03] p-4">
-                      <p className="text-[0.68rem] uppercase tracking-[0.2em] text-muted-foreground">
-                        Com erro
-                      </p>
-                      <p className="mt-2 text-2xl font-semibold tracking-[-0.04em] text-[rgb(228_176_160)]">
-                        {failedFiles}
-                      </p>
-                    </div>
-                    <div className="rounded-[1.3rem] border border-white/10 bg-white/[0.03] p-4">
-                      <p className="text-[0.68rem] uppercase tracking-[0.2em] text-muted-foreground">
-                        Em fila
-                      </p>
-                      <p className="mt-2 text-2xl font-semibold tracking-[-0.04em] text-[rgb(240_221_200)]">
-                        {pendingFiles}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="grid gap-3">
-                    {jobFiles.length ? (
-                      jobFiles.map((file) => {
-                        const canRetry = file.status === "error" && !busy;
-                        const fileTone =
-                          file.status === "completed"
-                            ? "border-[rgb(105_141_105_/0.2)] bg-[rgb(90_126_84_/0.08)]"
-                            : file.status === "error"
-                              ? "border-[rgb(156_94_75_/0.24)] bg-[rgb(169_111_93_/0.08)]"
-                              : "border-white/10 bg-white/[0.03]";
-
-                        return (
+                        <div style={{ display: "flex", gap: "8px" }}>
                           <div
-                            key={file.path}
-                            className={cn("rounded-[1.45rem] border p-4 transition-colors", fileTone)}
+                            style={{
+                              flex: 1,
+                              height: "var(--daw-row-h)",
+                              background: "var(--daw-bg-0)",
+                              border: "1px solid var(--daw-line)",
+                              borderRadius: "8px",
+                              padding: "0 12px",
+                              display: "flex",
+                              alignItems: "center",
+                              fontFamily: "var(--daw-font-mono)",
+                              fontSize: "11px",
+                              color: "var(--daw-ink-2)",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                            }}
                           >
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="min-w-0">
-                                <p className="text-[0.68rem] uppercase tracking-[0.2em] text-muted-foreground">
-                                  Capitulo {file.index}
-                                </p>
-                                <p className="mt-2 truncate text-sm font-medium text-foreground">
-                                  {file.name}
-                                </p>
-                                <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                                  {file.error ?? file.message}
-                                </p>
+                            {speakerWav ? formatSelectionLabel(speakerWav) : "Nenhum WAV selecionado"}
+                          </div>
+                          <button className="daw-mini-btn" onClick={chooseSpeakerWav}>
+                            Escolher WAV
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div>
+                        <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "6px" }}>
+                          <span className="daw-row-label" style={{ margin: 0 }}>Voz</span>
+                          <span className="daw-spacer" />
+                          <span className="daw-chip muted">{availableVoices.length} opções</span>
+                        </div>
+                        <div className="daw-voice-search">
+                          <svg
+                            className="daw-voice-search-ico"
+                            width="15"
+                            height="15"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <circle cx="11" cy="11" r="8" />
+                            <path d="m21 21-4.3-4.3" />
+                          </svg>
+                          <input
+                            className="daw-voice-input"
+                            type="text"
+                            placeholder="Buscar por nome ou código"
+                            value={voiceFilter}
+                            onChange={(e) => setVoiceFilter(e.target.value)}
+                          />
+                        </div>
+                        <div className="daw-voice-grid">
+                          {availableVoices.map((voice) => (
+                            <div
+                              key={voice.id}
+                              className={`daw-voice ${selectedVoice === voice.id ? "selected" : ""}`}
+                              onClick={() => setSelectedVoice(voice.id)}
+                            >
+                              <div className="daw-voice-avatar">
+                                {voiceInitials(voice.label)}
                               </div>
-                              <Badge className={statusBadgeClass(file.status)} variant="outline">
-                                {file.status}
-                              </Badge>
+                              <div className="daw-voice-meta">
+                                <div className="daw-voice-name">{voice.label}</div>
+                                <div className="daw-voice-code">{voice.id}</div>
+                              </div>
                             </div>
+                          ))}
+                        </div>
+                        {/* Voice preview strip */}
+                        <div
+                          style={{
+                            marginTop: "14px",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "10px",
+                            background: "var(--daw-bg-0)",
+                            border: "1px solid var(--daw-line-soft)",
+                            borderRadius: "10px",
+                            padding: "10px 12px",
+                          }}
+                        >
+                          <div style={{ fontFamily: "var(--daw-font-mono)", fontSize: "11px", color: "var(--daw-ink-2)", whiteSpace: "nowrap" }}>
+                            {activeVoiceLabel}
+                          </div>
+                          <WaveStrip n={90} seed={3} />
+                        </div>
+                      </div>
+                    )}
+                  </div>
 
-                            <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-                              <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                                {file.total_chunks
-                                  ? `${file.completed_chunks}/${file.total_chunks} chunks`
-                                  : "Sem chunks registrados"}
-                              </p>
-                              {canRetry ? (
-                                <Button
-                                  size="sm"
-                                  onClick={() => retryFile(file.path)}
-                                  className="rounded-full px-4"
-                                >
-                                  <RefreshCcw className="size-4" />
-                                  Recriar
-                                </Button>
-                              ) : file.output_path && file.status === "completed" ? (
-                                <p className="text-xs uppercase tracking-[0.18em] text-[rgb(196_220_186)]">
-                                  convertido
-                                </p>
-                              ) : null}
+                  {/* Right col: Source + IO */}
+                  <div className="daw-col">
+                    <div>
+                      <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "8px" }}>
+                        <span className="daw-row-label" style={{ margin: 0 }}>Fonte do texto</span>
+                        <span className="daw-spacer" />
+                        <span className="daw-chip teal">
+                          {sourceMode === "file" ? "arquivo único .md" : sourceMode === "files" ? "múltiplos" : "pasta"}
+                        </span>
+                      </div>
+                      <div className="daw-tabs">
+                        <div
+                          className={`daw-tab ${sourceMode === "file" ? "active" : ""}`}
+                          onClick={() => setSourceMode("file")}
+                        >
+                          <div className="daw-tt">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                              <path d="M14 2v6h6" />
+                            </svg>
+                            Arquivo
+                          </div>
+                          <div className="daw-dd">um .md → um mp3</div>
+                        </div>
+                        <div
+                          className={`daw-tab ${sourceMode === "files" ? "active" : ""}`}
+                          onClick={() => setSourceMode("files")}
+                        >
+                          <div className="daw-tt">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" />
+                              <rect x="3" y="14" width="7" height="7" /><rect x="14" y="14" width="7" height="7" />
+                            </svg>
+                            Lote
+                          </div>
+                          <div className="daw-dd">vários · capítulos</div>
+                        </div>
+                        <div
+                          className={`daw-tab ${sourceMode === "directory" ? "active" : ""}`}
+                          onClick={() => setSourceMode("directory")}
+                        >
+                          <div className="daw-tt">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                            </svg>
+                            Pasta
+                          </div>
+                          <div className="daw-dd">varrer recursivamente</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* File preview */}
+                    <div
+                      style={{
+                        border: "1px solid var(--daw-line-soft)",
+                        borderRadius: "10px",
+                        background: "var(--daw-bg-0)",
+                        padding: "14px",
+                      }}
+                    >
+                      {inputs.length > 0 ? (
+                        <div style={{ display: "flex", alignItems: "flex-start", gap: "12px" }}>
+                          <div
+                            style={{
+                              width: "40px",
+                              height: "48px",
+                              borderRadius: "6px",
+                              background: "linear-gradient(180deg, var(--daw-bg-3), var(--daw-bg-2))",
+                              border: "1px solid var(--daw-line)",
+                              display: "grid",
+                              placeItems: "center",
+                              fontFamily: "var(--daw-font-mono)",
+                              fontSize: "9px",
+                              color: "var(--daw-ink-2)",
+                              flexShrink: 0,
+                            }}
+                          >
+                            {sourceMode === "directory" ? "DIR" : "MD"}
+                          </div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontFamily: "var(--daw-font-mono)", fontSize: "12px", color: "var(--daw-ink-0)" }}>
+                              {formatSelectionLabel(inputs[0])}
                             </div>
+                            <div
+                              style={{
+                                fontFamily: "var(--daw-font-mono)",
+                                fontSize: "10.5px",
+                                color: "var(--daw-ink-3)",
+                                marginTop: "2px",
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              {inputs[0]}
+                            </div>
+                            <div
+                              style={{
+                                marginTop: "8px",
+                                display: "flex",
+                                gap: "10px",
+                                fontFamily: "var(--daw-font-mono)",
+                                fontSize: "10.5px",
+                                color: "var(--daw-ink-2)",
+                              }}
+                            >
+                              {previewLoading ? (
+                                <span>carregando...</span>
+                              ) : inputPreview ? (
+                                <>
+                                  <span>· {inputPreview.file_count} {inputPreview.kind === "directory" ? "arquivos" : "capítulo(s)"}</span>
+                                  {inputs.length > 1 && <span>· {inputs.length} selecionados</span>}
+                                </>
+                              ) : (
+                                <span>· pronto</span>
+                              )}
+                            </div>
+                          </div>
+                          <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                            <button
+                              className="daw-mini-btn"
+                              onClick={sourceMode === "directory" ? chooseFolder : chooseFiles}
+                            >
+                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                <path d="M17 8l-5-5-5 5" /><path d="M12 3v12" />
+                              </svg>
+                              Trocar
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div style={{ textAlign: "center", padding: "16px 0" }}>
+                          <button
+                            className="daw-mini-btn"
+                            style={{ margin: "0 auto" }}
+                            onClick={sourceMode === "directory" ? chooseFolder : chooseFiles}
+                          >
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                              <path d="M17 8l-5-5-5 5" /><path d="M12 3v12" />
+                            </svg>
+                            {sourceMode === "directory" ? "Selecionar pasta" : "Selecionar arquivo(s) .md"}
+                          </button>
+                          <div style={{ marginTop: "8px", fontFamily: "var(--daw-font-mono)", fontSize: "11px", color: "var(--daw-ink-3)" }}>
+                            Nenhuma entrada selecionada
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* IO metadata grid */}
+                    <div>
+                      <span className="daw-row-label">Saída e destino</span>
+                      <div className="daw-io-grid">
+                        <div className="daw-io-cell">
+                          <div className="k">Pasta de saída</div>
+                          <div className="v mono">{outputDir || "não definida"}</div>
+                        </div>
+                        <div className="daw-io-cell">
+                          <div className="k">Formato</div>
+                          <div className="v">{outputFormat.toUpperCase()} · 192k</div>
+                        </div>
+                        <div className="daw-io-cell">
+                          <div className="k">Voz selecionada</div>
+                          <div className="v mono">{activeVoiceLabel}</div>
+                        </div>
+                        <div className="daw-io-cell">
+                          <div className="k">Workers</div>
+                          <div className="v">{maxWorkers}</div>
+                        </div>
+                      </div>
+                      <div style={{ display: "flex", gap: "8px", marginTop: "12px", flexWrap: "wrap" }}>
+                        <button className="daw-mini-btn" onClick={chooseOutputDir}>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                          </svg>
+                          Pasta de saída
+                        </button>
+                        <button className="daw-mini-btn ghost" onClick={resetForm}>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M3 12a9 9 0 1 0 9-9" /><path d="M3 3v6h6" />
+                          </svg>
+                          Redefinir
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            {/* Error display */}
+            {error && (
+              <div className="daw-error">
+                ⚠ {error}
+                <button
+                  onClick={() => setError(null)}
+                  style={{
+                    float: "right",
+                    background: "transparent",
+                    border: "none",
+                    color: "var(--daw-red)",
+                    cursor: "pointer",
+                    fontSize: "12px",
+                    padding: 0,
+                    fontFamily: "var(--daw-font-mono)",
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+
+            {/* Transport bar */}
+            <div className="daw-transport">
+              <div className="daw-status-pill">
+                <span
+                  className={`daw-status-dot ${
+                    job.status === "running"
+                      ? "running"
+                      : job.status === "completed"
+                        ? "completed"
+                        : job.status === "error"
+                          ? "error"
+                          : ""
+                  }`}
+                />
+                {job.status === "running"
+                  ? job.current_file_name
+                    ? `Convertendo ${job.current_file_name}`
+                    : "Processando..."
+                  : job.status === "completed"
+                    ? "Conversão concluída"
+                    : job.status === "error"
+                      ? "Erro na conversão"
+                      : job.status === "queued"
+                        ? "Na fila..."
+                        : validationHints.length
+                          ? validationHints[0]
+                          : "Pronto para converter"}
+                {job.status === "running" && job.total_chunks > 0 && (
+                  <span style={{ fontFamily: "var(--daw-font-mono)", fontSize: "11px", color: "var(--daw-ink-3)", marginLeft: "8px" }}>
+                    · {job.completed_chunks}/{job.total_chunks} chunks
+                  </span>
+                )}
+              </div>
+              <WaveStrip n={120} seed={7} />
+              <div className="daw-transport-actions">
+                {busy ? (
+                  <button className="daw-btn danger" onClick={cancelConversion}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                      <rect x="6" y="6" width="12" height="12" />
+                    </svg>
+                    Parar
+                  </button>
+                ) : (
+                  <button className="daw-btn" onClick={resetForm}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M3 12a9 9 0 1 0 9-9" /><path d="M3 3v6h6" />
+                    </svg>
+                    Redefinir
+                  </button>
+                )}
+                <button
+                  className="daw-btn primary"
+                  onClick={startConversion}
+                  disabled={!canStart}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M8 5v14l11-7z" />
+                  </svg>
+                  {busy ? "Processando..." : "Iniciar conversão"}
+                </button>
+              </div>
+            </div>
+
+            {/* Execution panel */}
+            <section className="daw-panel">
+              <header className="daw-panel-head">
+                <span className="daw-panel-tag">Execução</span>
+                <h3>Estado atual</h3>
+                <span className="daw-panel-sub" />
+                {job.status === "running" && (
+                  <span
+                    className="daw-chip amber"
+                    style={{ cursor: "default" }}
+                  >
+                    ● {Math.round(totalProgress * 100)}% · {elapsedDisplay}
+                  </span>
+                )}
+                {job.status === "completed" && (
+                  <span className="daw-chip teal" style={{ cursor: "default" }}>
+                    ✓ concluído · {elapsedDisplay}
+                  </span>
+                )}
+              </header>
+              <div className="daw-panel-body" style={{ display: "grid", gap: "14px" }}>
+
+                {/* Overall progress */}
+                <div className="daw-progress-overall">
+                  <div>
+                    <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "8px" }}>
+                      <span className="daw-section-label">Progresso geral</span>
+                      <span style={{ flex: 1 }} />
+                      {job.total_chunks > 0 && (
+                        <span style={{ fontFamily: "var(--daw-font-mono)", fontSize: "11px", color: "var(--daw-ink-2)" }}>
+                          chunk {job.completed_chunks} / {job.total_chunks}
+                        </span>
+                      )}
+                    </div>
+                    <div className="daw-bar">
+                      <span
+                        className={`daw-bar-fill ${job.status === "running" ? "active" : ""}`}
+                        style={{ width: `${Math.round(totalProgress * 100)}%` }}
+                      />
+                    </div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div
+                      style={{
+                        fontFamily: "var(--daw-font-mono)",
+                        fontSize: "24px",
+                        color: "var(--daw-amber)",
+                        letterSpacing: "-0.02em",
+                        textShadow: "0 0 10px oklch(0.82 0.14 78 / 0.25)",
+                      }}
+                    >
+                      {elapsedDisplay}
+                    </div>
+                    <div style={{ fontFamily: "var(--daw-font-mono)", fontSize: "10.5px", color: "var(--daw-ink-3)" }}>
+                      {job.status === "running" ? "decorrido" : job.status === "completed" ? "tempo final" : "em espera"}
+                    </div>
+                  </div>
+                </div>
+
+                {/* VU meters */}
+                <div className="daw-meter-stack">
+                  <div className="daw-meter">
+                    <div className="k">Arquivo</div>
+                    <div className={`v ${job.current_file_index > 0 ? "" : ""}`}>
+                      {job.total_files > 0 ? `${job.current_file_index}/${job.total_files}` : "—"}
+                    </div>
+                    <div className="sub">
+                      {job.current_file_name ? formatSelectionLabel(job.current_file_name) : "aguardando"}
+                    </div>
+                  </div>
+                  <div className="daw-meter">
+                    <div className="k">Chunk atual</div>
+                    <div className="v amber">
+                      {job.total_chunks > 0 ? job.completed_chunks : "—"}
+                    </div>
+                    <div className="sub">
+                      {job.total_chunks > 0 ? `de ${job.total_chunks}` : "sem chunks"}
+                    </div>
+                  </div>
+                  <div className="daw-meter">
+                    <div className="k">Progresso</div>
+                    <div className="v">{Math.round(totalProgress * 100)}%</div>
+                    <div className="sub">
+                      {job.status === "running" ? "em andamento" : job.status}
+                    </div>
+                  </div>
+                  <div className="daw-meter">
+                    <div className="k">Saída</div>
+                    <div className="v" style={{ fontSize: "15px", paddingTop: "4px" }}>
+                      {outputFormat.toUpperCase()} · 192k
+                    </div>
+                    <div className="sub">{outputDir ? outputLabel : "sem destino"}</div>
+                  </div>
+                </div>
+
+                {/* Chapter queue */}
+                {queueItems.length > 0 && (
+                  <div>
+                    <div style={{ display: "flex", alignItems: "center", gap: "10px", margin: "6px 0 6px" }}>
+                      <span className="daw-section-label">Fila de capítulos</span>
+                      <span style={{ flex: 1 }} />
+                      <span style={{ fontFamily: "var(--daw-font-mono)", fontSize: "10.5px", color: "var(--daw-ink-2)" }}>
+                        {completedCount > 0 && `${completedCount} concluídos · `}
+                        {activeCount > 0 && `${activeCount} ativo · `}
+                        {queuedCount > 0 && `${queuedCount} em fila`}
+                      </span>
+                    </div>
+                    <div className="daw-queue">
+                      {queueItems.map((item, idx) => (
+                        <div key={`${item.path}-${idx}`} className={`daw-queue-item ${item.state}`}>
+                          <span className="daw-q-state" />
+                          <span className="daw-q-name">{item.name}</span>
+                          <span className="daw-q-chunks">{item.chunks}</span>
+                          <span className="daw-q-dur">
+                            {item.canRetry ? (
+                              <button
+                                className="daw-retry-btn"
+                                onClick={() => retryFile(item.path)}
+                              >
+                                retry
+                              </button>
+                            ) : null}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Log */}
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px", margin: "10px 0 6px" }}>
+                    <span className="daw-section-label">Log da bridge</span>
+                    <span style={{ flex: 1 }} />
+                    <button
+                      className="daw-mini-btn ghost"
+                      style={{ height: "26px", fontSize: "11px" }}
+                      onClick={() => setLogs([])}
+                    >
+                      Limpar
+                    </button>
+                  </div>
+                  <div className="daw-log">
+                    {logs.length ? (
+                      logs.slice(-30).map((line, i) => {
+                        const isOk = line.toLowerCase().includes("ok") || line.toLowerCase().includes("escrito") || line.toLowerCase().includes("concluído");
+                        const isWarn = line.toLowerCase().includes("warn") || line.toLowerCase().includes("retry");
+                        const isErr = line.toLowerCase().includes("error") || line.toLowerCase().includes("erro");
+                        return (
+                          <div key={i}>
+                            <span className={isOk ? "lok" : isWarn ? "lwarn" : isErr ? "lerr" : ""}>
+                              {line}
+                            </span>
                           </div>
                         );
                       })
                     ) : (
-                      <div className="rounded-[1.45rem] border border-dashed border-white/10 bg-white/[0.02] p-5 text-sm leading-6 text-muted-foreground">
-                        Os cards de capítulo aparecem aqui quando você selecionar múltiplos arquivos
-                        ou uma pasta para converter em lote.
+                      <div style={{ color: "var(--daw-ink-3)", fontSize: "11px" }}>
+                        Os eventos da bridge aparecem aqui quando a conversão começar.
                       </div>
                     )}
+                    <div ref={logEndRef} />
                   </div>
-                </CardContent>
-              </Card>
-            )}
+                </div>
+
+                {/* Advanced settings */}
+                <details className="daw-adv">
+                  <summary>
+                    <span className="daw-chev">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="m9 18 6-6-6-6" />
+                      </svg>
+                    </span>
+                    Ajustes avançados
+                    <span style={{ flex: 1 }} />
+                    <span style={{ color: "var(--daw-ink-3)", textTransform: "none", letterSpacing: 0, fontSize: "11px" }}>
+                      start · workers · formato · velocidade
+                    </span>
+                  </summary>
+                  <div className="daw-adv-body">
+                    <div className="daw-field">
+                      <label>Start at · capítulo inicial</label>
+                      <div className="daw-num">
+                        <input
+                          type="number"
+                          min={1}
+                          value={startAt}
+                          onChange={(e) => setStartAt(Number(e.target.value) || 1)}
+                        />
+                        <div className="daw-num-bumps">
+                          <button onClick={() => setStartAt((v) => v + 1)}>▲</button>
+                          <button onClick={() => setStartAt((v) => Math.max(1, v - 1))}>▼</button>
+                        </div>
+                      </div>
+                      <div className="hint">Chunk inicial no arquivo único ou capítulo inicial na pasta.</div>
+                    </div>
+                    <div className="daw-field">
+                      <label>Workers · paralelismo</label>
+                      <div className="daw-num">
+                        <input
+                          type="number"
+                          min={1}
+                          max={32}
+                          value={maxWorkers}
+                          onChange={(e) => setMaxWorkers(Number(e.target.value) || 1)}
+                        />
+                        <div className="daw-num-bumps">
+                          <button onClick={() => setMaxWorkers((v) => Math.min(32, v + 1))}>▲</button>
+                          <button onClick={() => setMaxWorkers((v) => Math.max(1, v - 1))}>▼</button>
+                        </div>
+                      </div>
+                      <div className="hint">Paralelismo por chunk. Edge TTS: 8–12 recomendado.</div>
+                    </div>
+                    <div className="daw-field">
+                      <label>Formato de saída</label>
+                      <div className="daw-seg">
+                        {(["mp3", "wav", "ogg"] as OutputFormat[]).map((fmt) => (
+                          <button
+                            key={fmt}
+                            className={outputFormat === fmt ? "on" : ""}
+                            onClick={() => setOutputFormat(fmt)}
+                          >
+                            {fmt.toUpperCase()}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="hint">Bitrate e sample rate configuráveis por modelo.</div>
+                    </div>
+                    <div className="daw-field">
+                      <label>Velocidade de fala</label>
+                      <div className="daw-slider">
+                        <span style={{ fontFamily: "var(--daw-font-mono)", fontSize: "11px", color: "var(--daw-ink-3)" }}>
+                          lento
+                        </span>
+                        <input
+                          type="range"
+                          className="daw-range"
+                          min={-50}
+                          max={50}
+                          step={5}
+                          value={speed}
+                          onChange={(e) => setSpeed(Number(e.target.value))}
+                          disabled={!currentModelAllowsSpeed}
+                        />
+                        <span style={{ fontFamily: "var(--daw-font-mono)", fontSize: "11px", color: "var(--daw-ink-3)" }}>
+                          rápido
+                        </span>
+                      </div>
+                      <div className="hint">
+                        {currentModelAllowsSpeed
+                          ? `${speed > 0 ? "+" : ""}${speed}% · Edge TTS: –50% a +50%.`
+                          : "Este modelo não expõe velocidade ajustável."}
+                      </div>
+                    </div>
+                  </div>
+                </details>
+
+              </div>
+            </section>
+            </>)}
+          </main>
+        </div>
+
+        {/* Footer */}
+        <div className="daw-foot">
+          <div className="daw-foot-hints">
+            <span><kbd>⌘↵</kbd> iniciar</span>
+            <span><kbd>Space</kbd> pausar</span>
+            <span><kbd>⌘R</kbd> redefinir</span>
+            <span><kbd>⌘,</kbd> preferências</span>
           </div>
-        </main>
+          <div>bridge · {bridgeOnline ? "online" : "offline"} · {currentModel?.id ?? "—"}</div>
+        </div>
       </div>
+
+      {/* Tweak panel */}
+      {tweakOpen && (
+        <div className="daw-tweak-panel">
+          <h4>Tweaks</h4>
+          <div className="daw-tweak-row">
+            <span>Densidade</span>
+            <select
+              value={density}
+              onChange={(e) => {
+                const v = e.target.value as "comfortable" | "compact";
+                setDensity(v);
+                localStorage.setItem("dawDensity", v);
+              }}
+            >
+              <option value="comfortable">Confortável</option>
+              <option value="compact">Compacto</option>
+            </select>
+          </div>
+          <div
+            style={{
+              color: "var(--daw-ink-3)",
+              fontSize: "11px",
+              marginTop: "8px",
+              lineHeight: 1.45,
+            }}
+          >
+            A densidade afeta espaçamento, altura de rows e tamanhos de texto.
+          </div>
+          <button
+            className="daw-mini-btn"
+            style={{ marginTop: "10px", width: "100%", justifyContent: "center" }}
+            onClick={() => setTweakOpen(false)}
+          >
+            Fechar
+          </button>
+        </div>
+      )}
     </div>
   );
 }
