@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -165,6 +165,7 @@ function App() {
   const [lastInputDir, setLastInputDir] = useState<string>(() => localStorage.getItem("lastInputDir") || "");
   const [lastOutputDir, setLastOutputDir] = useState<string>(() => localStorage.getItem("lastOutputDir") || "");
   const [lastSpeakerWavDir, setLastSpeakerWavDir] = useState<string>(() => localStorage.getItem("lastSpeakerWavDir") || "");
+  const jobStartTimeRef = useRef<number | null>(null);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -198,33 +199,40 @@ function App() {
       if (payload.status === "completed") {
         setBusy(false);
         const endTime = Date.now();
-        const elapsed = jobStartTime ? Math.round((endTime - jobStartTime) / 1000) : null;
+        const startTime = jobStartTimeRef.current;
+        const elapsed = startTime ? Math.round((endTime - startTime) / 1000) : null;
+        jobStartTimeRef.current = null;
         setJobStartTime(null);
         setEtaSeconds(null);
         setCurrentFileStart(null);
         setFinalJobTime(elapsed);
-        console.log("Job completed! elapsed:", elapsed, "startTime:", jobStartTime);
+        console.log("Job completed! elapsed:", elapsed, "startTime:", startTime);
       }
 
       if (payload.status === "cancelled") {
         setBusy(false);
         const endTime = Date.now();
-        const elapsed = jobStartTime ? Math.round((endTime - jobStartTime) / 1000) : null;
+        const startTime = jobStartTimeRef.current;
+        const elapsed = startTime ? Math.round((endTime - startTime) / 1000) : null;
+        jobStartTimeRef.current = null;
         setJobStartTime(null);
         setFinalJobTime(elapsed);
       }
 
       if (payload.status === "running") {
-        if (jobStartTime === null) {
-          setJobStartTime(Date.now());
-          console.log("Starting timer:", Date.now());
+        if (jobStartTimeRef.current === null) {
+          const startTime = Date.now();
+          jobStartTimeRef.current = startTime;
+          setJobStartTime(startTime);
+          console.log("Starting timer:", startTime);
         }
       }
 
       console.log("Event status:", payload.status);
 
       if (payload.status === "running" && payload.total_chunks > 0 && payload.completed_chunks > 0) {
-        const elapsed = (Date.now() - (jobStartTime || Date.now())) / 1000;
+        const startTime = jobStartTimeRef.current ?? Date.now();
+        const elapsed = (Date.now() - startTime) / 1000;
         const chunksRemaining = payload.total_chunks - payload.completed_chunks;
         const avgTimePerChunk = elapsed / payload.completed_chunks;
         const eta = Math.round(chunksRemaining * avgTimePerChunk);
@@ -496,8 +504,6 @@ function App() {
   }
 
   async function startConversion() {
-    setJobStartTime(Date.now());
-    setFinalJobTime(null);
     if (!inputs.length) {
       setError("Escolha um arquivo ou uma pasta de entrada.");
       return;
@@ -530,6 +536,8 @@ function App() {
       setLogs([]);
       setFileTimes([]);
       setCurrentFileStart(null);
+      jobStartTimeRef.current = null;
+      setJobStartTime(null);
       setFinalJobTime(null);
       setJob({
         ...defaultJobState,

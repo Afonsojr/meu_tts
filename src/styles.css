@@ -1158,42 +1158,42 @@ small {
 
 :root {
   color-scheme: dark;
-  --background: oklch(0.08 0.06 160);
-  --foreground: oklch(0.95 0.18 130);
-  --card: oklch(0.12 0.08 160);
-  --card-foreground: oklch(0.95 0.18 130);
-  --popover: oklch(0.1 0.08 160);
-  --popover-foreground: oklch(0.95 0.18 130);
-  --primary: oklch(0.78 0.28 145);
-  --primary-foreground: oklch(0.13 0.06 160);
-  --secondary: oklch(0.18 0.12 160);
-  --secondary-foreground: oklch(0.92 0.2 130);
-  --muted: oklch(0.2 0.1 160);
-  --muted-foreground: oklch(0.65 0.15 145);
-  --accent: oklch(0.72 0.32 145);
-  --accent-foreground: oklch(0.13 0.06 160);
-  --destructive: oklch(0.6 0.22 27);
-  --destructive-foreground: oklch(0.95 0.18 130);
-  --border: oklch(1 0 0 / 0.12);
-  --input: oklch(1 0 0 / 0.15);
-  --ring: oklch(0.78 0.28 145);
+  --background: oklch(0.15 0.014 40);
+  --foreground: oklch(0.94 0.018 70);
+  --card: oklch(0.19 0.012 38);
+  --card-foreground: oklch(0.94 0.018 70);
+  --popover: oklch(0.205 0.012 38);
+  --popover-foreground: oklch(0.94 0.018 70);
+  --primary: oklch(0.72 0.085 58);
+  --primary-foreground: oklch(0.2 0.018 35);
+  --secondary: oklch(0.27 0.014 38);
+  --secondary-foreground: oklch(0.93 0.014 70);
+  --muted: oklch(0.23 0.012 38);
+  --muted-foreground: oklch(0.73 0.018 55);
+  --accent: oklch(0.68 0.07 48);
+  --accent-foreground: oklch(0.2 0.018 35);
+  --destructive: oklch(0.61 0.17 25);
+  --destructive-foreground: oklch(0.95 0.015 70);
+  --border: oklch(0.82 0.02 60 / 0.14);
+  --input: oklch(0.86 0.02 60 / 0.17);
+  --ring: oklch(0.72 0.085 58);
   --radius: 1rem;
-  --cyan: oklch(0.92 0.25 200);
-  --cyan-soft: oklch(0.92 0.25 200 / 0.12);
-  --magenta: oklch(0.82 0.28 320);
-  --magenta-soft: oklch(0.82 0.28 320 / 0.12);
-  --orange: oklch(0.85 0.22 45);
-  --orange-soft: oklch(0.85 0.22 45 / 0.12);
-  --yellow: oklch(0.95 0.2 90);
-  --yellow-soft: oklch(0.95 0.2 90 / 0.12);
-  --blue: oklch(0.75 0.25 240);
-  --blue-soft: oklch(0.75 0.25 240 / 0.12);
-  --purple: oklch(0.78 0.3 280);
-  --purple-soft: oklch(0.78 0.3 280 / 0.12);
-  --red: oklch(0.7 0.22 20);
-  --red-soft: oklch(0.7 0.22 20 / 0.12);
-  --green: oklch(0.78 0.28 145);
-  --green-soft: oklch(0.78 0.28 145 / 0.12);
+  --cyan: oklch(0.72 0.05 220);
+  --cyan-soft: oklch(0.72 0.05 220 / 0.12);
+  --magenta: oklch(0.63 0.09 16);
+  --magenta-soft: oklch(0.63 0.09 16 / 0.12);
+  --orange: oklch(0.72 0.09 52);
+  --orange-soft: oklch(0.72 0.09 52 / 0.12);
+  --yellow: oklch(0.83 0.07 85);
+  --yellow-soft: oklch(0.83 0.07 85 / 0.12);
+  --blue: oklch(0.62 0.06 245);
+  --blue-soft: oklch(0.62 0.06 245 / 0.12);
+  --purple: oklch(0.58 0.05 305);
+  --purple-soft: oklch(0.58 0.05 305 / 0.12);
+  --red: oklch(0.61 0.17 25);
+  --red-soft: oklch(0.61 0.17 25 / 0.12);
+  --green: oklch(0.66 0.06 150);
+  --green-soft: oklch(0.66 0.06 150 / 0.12);
 }
 
 :root.light {
@@ -1278,9 +1278,9 @@ body {
     system-ui,
     sans-serif;
   background:
-    radial-gradient(circle at 12% 0%, rgb(34 255 85 / 0.12), transparent 26%),
-    radial-gradient(circle at 88% 16%, rgb(34 255 85 / 0.1), transparent 24%),
-    linear-gradient(180deg, rgb(8 16 8) 0%, rgb(4 10 4) 100%);
+    radial-gradient(circle at 12% 0%, rgb(177 131 91 / 0.13), transparent 26%),
+    radial-gradient(circle at 88% 16%, rgb(108 125 148 / 0.12), transparent 24%),
+    linear-gradient(180deg, rgb(28 24 22) 0%, rgb(17 18 22) 100%);
 }
 
 :root.light body {
@@ -1296,10 +1296,10 @@ body::before {
   inset: 0;
   pointer-events: none;
   background:
-    linear-gradient(rgb(34 255 85 / 0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgb(34 255 85 / 0.03) 1px, transparent 1px);
-  background-size: 48px 48px;
-  mask-image: linear-gradient(180deg, rgb(0 0 0 / 0.2), rgb(0 0 0 / 0.03) 60%, transparent);
+    linear-gradient(rgb(255 255 255 / 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(255 255 255 / 0.02) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: linear-gradient(180deg, rgb(0 0 0 / 0.18), rgb(0 0 0 / 0.04) 60%, transparent);
 }
 
 button,

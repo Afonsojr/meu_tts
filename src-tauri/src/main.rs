@@ -11,7 +11,8 @@ fn main() {
             bridge::get_catalog,
             bridge::inspect_input,
             bridge::start_conversion,
-            bridge::cancel_conversion
+            bridge::cancel_conversion,
+            bridge::retry_file_conversion
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -203,6 +203,7 @@ def main() -> int:
     )
 
     completed_chunks = 0
+    failed_files = 0
     output_paths: list[str] = []
     lock = threading.Lock()
 
@@ -247,18 +248,11 @@ def main() -> int:
                             )
                     elif event.get("event") == "chunk_error":
                         emit(
-                            "error",
-                            message=event.get("error", "Erro ao gerar chunk"),
-                            file_index=file_index,
-                            total_files=total_files,
-                            file_name=task.source_path.name,
-                            chunk_index=event.get("index"),
-                            completed_chunks=completed_chunks,
-                            total_chunks=total_chunks,
-                            output_paths=output_paths,
-                            progress=(completed_chunks / total_chunks)
-                            if total_chunks
-                            else 0.0,
+                            "log",
+                            message=(
+                                f"Chunk com erro em {task.source_path.name}: "
+                                f'{event.get("error", "Erro ao gerar chunk")}'
+                            ),
                         )
 
                 generated = generate(
@@ -310,16 +304,32 @@ def main() -> int:
                     total_chunks=total_chunks,
                     progress=(completed_chunks / total_chunks) if total_chunks else 1.0,
                 )
+            except Exception as exc:
+                failed_files += 1
+                emit(
+                    "file_failed",
+                    message=str(exc),
+                    file_index=file_index,
+                    total_files=total_files,
+                    file_name=task.source_path.name,
+                    completed_chunks=completed_chunks,
+                    total_chunks=total_chunks,
+                )
             finally:
                 shutil.rmtree(work_dir, ignore_errors=True)
 
         emit(
             "job_completed",
-            message="Conversão finalizada com sucesso.",
+            message=(
+                "Conversão finalizada com sucesso."
+                if failed_files == 0
+                else f"Conversão finalizada com {failed_files} capítulo(s) com erro."
+            ),
             output_paths=output_paths,
             progress=1.0,
             total_files=total_files,
             total_chunks=total_chunks,
+            failed_files=failed_files,
         )
         return 0
     except Exception as exc:
